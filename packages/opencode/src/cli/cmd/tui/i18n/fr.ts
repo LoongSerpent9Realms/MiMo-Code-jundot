@@ -80,7 +80,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Appuyez sur {highlight}Ctrl+P{/highlight} pour voir toutes les actions et commandes disponibles",
   "tui.tips.login":
-    "Exécutez {highlight}/login{/highlight} pour vous connecter et utiliser votre forfait de tokens",
+    "Exécutez {highlight}/login{/highlight} pour vous connecter et utiliser un Token Plan ou configurer votre propre clé API",
   "tui.tips.connect":
     "Exécutez {highlight}/connect{/highlight} pour choisir votre fournisseur LLM et ajouter des clés API",
   "tui.tips.leader":
@@ -293,6 +293,17 @@ export const dict = {
   "tui.dialog.confirm.cancel": "Annuler",
   "tui.dialog.confirm.confirm": "Confirmer",
   "tui.dialog.select.placeholder": "Rechercher",
+  "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
+  "provider.name.mimo": "MiMo",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, gratuit pour une durée limitée)",
+  "tui.dialog.token_plan.title": "Abonnez-vous à un Token Plan ou patientez dans la file",
+  "tui.dialog.token_plan.line1":
+    "En mode gratuit, les requêtes sont mises en file d'attente. Pour un service stable et de qualité,",
+  "tui.dialog.token_plan.subscribe": "abonnez-vous à ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "Vous pouvez aussi exécuter /login pour configurer votre propre clé API.",
+  "tui.dialog.token_plan.confirm": "Compris",
   "tui.dialog.select.no_results": "Aucun résultat trouvé",
   "tui.dialog.prompt.placeholder": "Saisir du texte",
   "tui.dialog.prompt.busy": "Traitement...",

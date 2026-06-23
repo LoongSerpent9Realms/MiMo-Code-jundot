@@ -32,6 +32,8 @@ export interface DialogSelectProps<T> {
     onTrigger: (option: DialogSelectOption<T>) => void
   }[]
   current?: T
+  /** Optional muted subtitle shown under the title (e.g. a usage hint). */
+  hint?: string
 }
 
 export interface DialogSelectOption<T = any> {
@@ -172,9 +174,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     const option = selected()
     if (option) props.onMove?.(option)
     if (!scroll) return
-    const target = scroll.getChildren().find((child) => {
-      return child.id === JSON.stringify(selected()?.value)
-    })
+    const target = scroll.getChildren().find((child) => child.id === String(next))
     if (!target) return
     const y = target.y - scroll.y
     if (center) {
@@ -186,7 +186,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       }
       if (y < 0) {
         scroll.scrollBy(y)
-        if (isDeepEqual(flat()[0].value, selected()?.value)) {
+        if (next === 0) {
           scroll.scrollTo(0)
         }
       }
@@ -252,6 +252,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
             {t("tui.dialog.close_hint")}
           </text>
         </box>
+        <Show when={props.hint}>
+          <box paddingTop={1} alignItems="center">
+            <text fg={theme.textMuted}>{props.hint}</text>
+          </box>
+        </Show>
         <Show when={!props.skipFilter}>
           <box paddingTop={1}>
             <input
@@ -314,11 +319,12 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                 </Show>
                 <For each={options}>
                   {(option) => {
-                    const active = createMemo(() => isDeepEqual(option.value, selected()?.value))
+                    const rowIndex = createMemo(() => flat().indexOf(option))
+                    const active = createMemo(() => rowIndex() === store.selected)
                     const current = createMemo(() => isDeepEqual(option.value, props.current))
                     return (
                       <box
-                        id={JSON.stringify(option.value)}
+                        id={String(rowIndex())}
                         flexDirection="row"
                         position="relative"
                         onMouseMove={() => {
@@ -330,14 +336,12 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                         }}
                         onMouseOver={() => {
                           if (store.input !== "mouse") return
-                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
-                          if (index === -1) return
-                          moveTo(index)
+                          if (rowIndex() === -1) return
+                          moveTo(rowIndex())
                         }}
                         onMouseDown={() => {
-                          const index = flat().findIndex((x) => isDeepEqual(x.value, option.value))
-                          if (index === -1) return
-                          moveTo(index)
+                          if (rowIndex() === -1) return
+                          moveTo(rowIndex())
                         }}
                         backgroundColor={active() ? (option.bg ?? theme.primary) : RGBA.fromInts(0, 0, 0, 0)}
                         paddingLeft={current() || option.gutter ? 1 : 3}
