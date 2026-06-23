@@ -29,11 +29,6 @@ const options = {
     describe: "additional domains to allow for CORS",
     default: [] as string[],
   },
-  "no-auth": {
-    type: "boolean" as const,
-    describe: "allow starting without authentication on non-loopback addresses (DANGEROUS)",
-    default: false,
-  },
 }
 
 export type NetworkOptions = InferredOptionTypes<typeof options>
@@ -62,7 +57,6 @@ export function resolveNetworkOptionsNoConfig(args: NetworkOptions, config?: Con
   const configCors = config?.server?.cors ?? []
   const argsCors = Array.isArray(args.cors) ? args.cors : args.cors ? [args.cors] : []
   const cors = [...configCors, ...argsCors]
-  const noAuth = args["no-auth"]
 
-  return { hostname, port, mdns, mdnsDomain, cors, noAuth }
+  return { hostname, port, mdns, mdnsDomain, cors }
 }

@@ -180,33 +180,25 @@ else
         fi
     fi
 
-    # Download from Xiaomi FDS (fast in mainland China). Layout:
-    #   $MIMO_FDS_BASE/releases/latest          -> text file containing the latest version (e.g. 0.1.0)
-    #   $MIMO_FDS_BASE/releases/v<version>/<filename>
-    fds_base="${MIMO_FDS_BASE:-https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode}"
-    fds_base="${fds_base%/}"
-
     if [ -z "$requested_version" ]; then
-        specific_version=$(curl -fsSL "${fds_base}/releases/latest" 2>/dev/null | tr -d '[:space:]' | sed 's/^v//')
+        url="https://github.com/LoongSerpent9Realms/MiMo-Code-jundot/releases/latest/download/$filename"
+        specific_version=$(curl -s https://api.github.com/repos/LoongSerpent9Realms/MiMo-Code-jundot/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
 
-        if [ -z "$specific_version" ]; then
+        if [[ $? -ne 0 || -z "$specific_version" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
-            echo -e "${MUTED}Could not resolve the latest release from FDS. Please check your network and retry,${NC}"
-            echo -e "${MUTED}or install a specific version, e.g.: bash -s -- --version 0.1.0${NC}"
             exit 1
         fi
-        url="${fds_base}/releases/v${specific_version}/$filename"
     else
         # Strip leading 'v' if present
         requested_version="${requested_version#v}"
+        url="https://github.com/LoongSerpent9Realms/MiMo-Code-jundot/releases/download/v${requested_version}/$filename"
         specific_version=$requested_version
-        url="${fds_base}/releases/v${requested_version}/$filename"
 
-        # Verify the artifact exists before downloading
-        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "$url")
+        # Verify the release exists before downloading
+        http_status=$(curl -sI -o /dev/null -w "%{http_code}" "https://github.com/LoongSerpent9Realms/MiMo-Code-jundot/releases/tag/v${requested_version}")
         if [ "$http_status" = "404" ]; then
             echo -e "${RED}Error: Release v${requested_version} not found${NC}"
-            echo -e "${MUTED}Checked: ${url}${NC}"
+            echo -e "${MUTED}Available releases: https://github.com/LoongSerpent9Realms/MiMo-Code-jundot/releases${NC}"
             exit 1
         fi
     fi
@@ -452,9 +444,10 @@ if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
 fi
 
 echo -e ""
-echo -e "${MUTED}█▀▄▀█ ░▀░ █▀▄▀█ █▀▀█ ${NC}█▀▀ █▀▀█ █▀▀▄ █▀▀"
-echo -e "${MUTED}█░▀░█ ▀█▀ █░▀░█ █░░█ ${NC}█░░ █░░█ █░░█ █▀▀"
-echo -e "${MUTED}▀░░░▀ ▀▀▀ ▀░░░▀ ▀▀▀▀ ${NC}▀▀▀ ▀▀▀▀ ▀▀░▀ ▀▀▀"
+echo -e "${MUTED}                    ${NC}             ▄     "
+echo -e "${MUTED}█▀▀█ █▀▀█ █▀▀█ █▀▀▄ ${NC}█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
+echo -e "${MUTED}█░░█ █░░█ █▀▀▀ █░░█ ${NC}█░░░ █░░█ █░░█ █▀▀▀"
+echo -e "${MUTED}▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ${NC}▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"
 echo -e ""
 echo -e ""
 echo -e "${MUTED}To start:${NC}"

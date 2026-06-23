@@ -606,10 +606,13 @@ export const dict = {
   "settings.section.server": "伺服器",
   "settings.tab.general": "一般",
   "settings.tab.shortcuts": "快速鍵",
+  "settings.desktop.httpServer.title": "HTTP 服務",
+  "settings.desktop.httpServer.description": "允許 Jundot 等本機工具透過 http://127.0.0.1:4096 呼叫 MiMoCode。重新啟動後生效。",
   "settings.desktop.section.wsl": "WSL",
   "settings.desktop.wsl.title": "WSL 整合",
   "settings.desktop.wsl.description": "在 Windows 上的 WSL 中執行 OpenCode 伺服器。",
 
+  "settings.general.section.desktop": "桌面",
   "settings.general.section.appearance": "外觀",
   "settings.general.section.notifications": "系統通知",
   "settings.general.section.updates": "更新",

@@ -70,6 +70,12 @@ export type Platform = {
   /** Set the configured WSL integration (desktop only) */
   setWslEnabled?(config: boolean): Promise<void> | void
 
+  /** Get whether the local HTTP API is exposed for desktop integrations */
+  getHttpServerEnabled?(): Promise<boolean>
+
+  /** Set whether the local HTTP API is exposed for desktop integrations */
+  setHttpServerEnabled?(enabled: boolean): Promise<void> | void
+
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null
 

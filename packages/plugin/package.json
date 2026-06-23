@@ -1,21 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@mimo-ai/plugin",
-  "version": "0.1.1",
-  "description": "Plugin SDK for extending MiMoCode",
-  "keywords": ["mimo", "mimocode", "ai", "plugin", "coding-assistant"],
+  "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "author": "Xiaomi MiMo Team",
-  "homepage": "https://mimo.xiaomi.com/coder",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
-    "directory": "packages/plugin"
-  },
-  "bugs": {
-    "url": "https://github.com/XiaomiMiMo/MiMo-Code/issues"
-  },
   "publishConfig": {
     "access": "public"
   },

@@ -17,7 +17,6 @@ import { Glob } from "@mimo-ai/shared/util/glob"
 import { Log } from "../util"
 import { Discovery } from "./discovery"
 import { extractComposeBundle } from "./compose/extract"
-import { extractBuiltinBundle } from "./builtin/extract"
 
 const log = Log.create({ service: "skill" })
 const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
@@ -72,7 +71,6 @@ export interface Interface {
   readonly all: () => Effect.Effect<Info[]>
   readonly dirs: () => Effect.Effect<string[]>
   readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
-  readonly reload: () => Effect.Effect<void>
 }
 
 const add = Effect.fnUntraced(function* (state: State, match: string, bus: Bus.Interface) {
@@ -155,17 +153,7 @@ const discoverSkills = Effect.fnUntraced(function* (
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
 
-  // Extract builtin skills to disk first (user skills with same name override)
-  if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
-    const builtinSkillRoot = yield* extractBuiltinBundle(fsys).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    )
-    if (builtinSkillRoot && (yield* fsys.isDir(builtinSkillRoot))) {
-      yield* scan(state, builtinSkillRoot, SKILL_PATTERN, { scope: "builtin" })
-    }
-  }
-
-  // Extract compose skills to disk (user skills with same name override)
+  // Extract compose skills to disk first (user skills with same name override)
   if (!Flag.MIMOCODE_DISABLE_COMPOSE_SKILLS) {
     const composeSkillRoot = yield* extractComposeBundle(fsys).pipe(
       Effect.catch(() => Effect.succeed(undefined)),
@@ -283,12 +271,7 @@ export const layer = Layer.effect(
       return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
     })
 
-    const reload = Effect.fn("Skill.reload")(function* () {
-      yield* InstanceState.invalidate(discovered)
-      yield* InstanceState.invalidate(state)
-    })
-
-    return Service.of({ get, all, dirs, available, reload })
+    return Service.of({ get, all, dirs, available })
   }),
 )
 

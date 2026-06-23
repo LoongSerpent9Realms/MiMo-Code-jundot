@@ -50,7 +50,6 @@ import type { ActorTool } from "@/tool/actor"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
-import type { WorkflowTool } from "@/tool/workflow"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -1341,10 +1340,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
-  const toast = useToast()
-  const renderer = useRenderer()
-  const t = useLanguage().t
-  const [copyHover, setCopyHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
 
@@ -1361,19 +1356,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   })
 
   const keybind = useKeybind()
-
-  const handleCopy = () => {
-    if (renderer.getSelection()?.getSelectedText()) return
-    const text = props.parts
-      .filter((p) => p.type === "text")
-      .map((p) => (p as TextPart).text)
-      .join("\n")
-      .trim()
-    if (!text) return
-    Clipboard.copy(text)
-      .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
-      .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
-  }
 
   // Goal judge verdict for this specific turn, if the stop-condition judge
   // evaluated it. Rendered as a foldable per-turn marker so the user can trace
@@ -1419,8 +1401,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       </Show>
       <Switch>
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
-          <box paddingLeft={3} flexDirection="row" justifyContent="space-between" marginTop={1}>
-            <text>
+          <box paddingLeft={3}>
+            <text marginTop={1}>
               <span
                 style={{
                   fg:
@@ -1440,15 +1422,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>
             </text>
-            <Show when={props.message.time.completed}>
-              <box
-                onMouseOver={() => setCopyHover(true)}
-                onMouseOut={() => setCopyHover(false)}
-                onMouseUp={handleCopy}
-              >
-                <text fg={copyHover() ? theme.text : theme.textMuted}>⎘ copy</text>
-              </box>
-            </Show>
           </box>
         </Match>
       </Switch>
@@ -1730,9 +1703,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "workflow"}>
-          <Workflow {...toolprops} />
-        </Match>
         <Match when={props.part.tool === "plan_exit"}>
           <PlanExit {...toolprops} />
         </Match>
@@ -1832,81 +1802,6 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
-// Inline renderer for the dynamic-workflow `workflow` tool. The "run" op blocks
-// until terminal and streams a transcript (phase transitions + log() messages)
-// into part-state metadata via ctx.metadata; the tool's `Workflow` view here
-// reads metadata.transcript reactively (each ctx.metadata call fires a
-// message.part.delta) and renders it as multi-line chat content alongside the
-// live header from sync.data.workflow[runID]. That way phase/log events show
-// up in the main agent's conversation as the workflow runs, not as a single
-// silent line that only updates once the run finishes.
-function Workflow(props: ToolProps<typeof WorkflowTool>) {
-  const sync = useSync()
-
-  const operation = createMemo(() => {
-    const op = (props.input as { operation?: string }).operation
-    return typeof op === "string" ? op : "run"
-  })
-
-  const runID = createMemo(
-    () => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id,
-  )
-
-  const run = createMemo(() => {
-    const id = runID()
-    if (!id) return undefined
-    return sync.data.workflow[id]
-  })
-
-  // Spinner is true while EITHER side reports running — the tool part stays
-  // running until execute() returns (the whole workflow duration, since we
-  // block), and the bus-fed run row independently reports "running" until the
-  // workflow.finished event lands. Either signal alone is enough.
-  const isRunning = createMemo(() => {
-    if (props.part.state.status === "running") return true
-    const r = run()
-    return r?.status === "running"
-  })
-
-  const transcript = createMemo(() => {
-    const t = (props.metadata as { transcript?: { kind: "phase" | "log"; text: string }[] }).transcript
-    return Array.isArray(t) ? t : []
-  })
-
-  const content = createMemo(() => {
-    const op = operation()
-    const r = run()
-    const id = runID()
-    if (op !== "run") {
-      return `workflow ${op}${id ? ` ${id}` : ""}`
-    }
-    const lines: string[] = []
-    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
-    const status = r?.status ?? (props.metadata.status as string | undefined)
-    const phase = r?.currentPhase
-    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
-    const head = [
-      `workflow ${name}`,
-      status ? `· ${status}` : "",
-      phase ? `· ${phase}` : "",
-      counters ? `· ${counters}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-    lines.push(head)
-    for (const e of transcript()) {
-      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
-    }
-    return lines.join("\n")
-  })
-
-  return (
-    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-      {content()}
-    </InlineTool>
-  )
-}
-
 function CollapsibleError(props: { error: string; paddingLeft?: number }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
@@ -1982,14 +1877,6 @@ function InlineTool(props: {
       error()?.includes("user dismissed"),
   )
 
-  // Agent-recoverable failures (bad args, malformed call, unknown task/actor id)
-  // are flagged on the error state. Render them muted (struck through, no red
-  // block) like denials — the agent self-corrects; the user needn't be alarmed.
-  const recoverable = createMemo(() => {
-    const state = props.part.state
-    return state.status === "error" && state.metadata?.recoverable === true
-  })
-
   return (
     <box
       marginTop={margin()}
@@ -2028,14 +1915,14 @@ function InlineTool(props: {
           <Spinner color={fg()} children={props.children} />
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text paddingLeft={3} fg={fg()} attributes={denied() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
               <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
             </Show>
           </text>
         </Match>
       </Switch>
-      <Show when={error() && !denied() && !recoverable()}>
+      <Show when={error() && !denied()}>
         <CollapsibleError error={error()!} paddingLeft={3} />
       </Show>
     </box>
@@ -2305,25 +2192,24 @@ function Task(props: ToolProps<typeof ActorTool>) {
   const route = useRoute()
   const sync = useSync()
 
-  const input = createMemo(() => {
-    const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
-      description: string
-      subagent_type: string
-    }>
-    return (raw?.operation ?? raw) as Partial<{ description: string; subagent_type: string }>
+  // Spawn-shaped view: the Task display is meaningful only for run/spawn calls
+  // (the only actions that create a delegated child session). status/wait/cancel
+  // end up here with these fields undefined and the early returns below render empty.
+  const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
+    description: string
+    subagent_type: string
+  }>
+  const input: Partial<{ description: string; subagent_type: string }> = raw?.operation ?? raw
+
+  const targetSession = props.metadata.sessionId
+  const targetBucket = (props.metadata.actorId as string | undefined) ?? "main"
+
+  onMount(() => {
+    if (targetSession && !sync.data.message[targetSession]?.[targetBucket]?.length)
+      void sync.session.sync(targetSession)
   })
 
-  const targetSession = createMemo(() => props.metadata.sessionId as string | undefined)
-  const targetBucket = createMemo(() => (props.metadata.actorId as string | undefined) ?? "main")
-
-  createEffect(() => {
-    const session = targetSession()
-    const bucket = targetBucket()
-    if (session && !sync.data.message[session]?.[bucket]?.length)
-      void sync.session.sync(session)
-  })
-
-  const messages = createMemo(() => sync.data.message[targetSession() ?? ""]?.[targetBucket()] ?? [])
+  const messages = createMemo(() => sync.data.message[targetSession ?? ""]?.[targetBucket] ?? [])
 
   const tools = createMemo(() => {
     return messages().flatMap((msg) =>
@@ -2347,8 +2233,8 @@ function Task(props: ToolProps<typeof ActorTool>) {
   })
 
   const content = createMemo(() => {
-    if (!input().description) return ""
-    let content = [`${Locale.titlecase(input().subagent_type ?? "General")} Task — ${input().description}`]
+    if (!input.description) return ""
+    let content = [`${Locale.titlecase(input.subagent_type ?? "General")} Task — ${input.description}`]
 
     if (isRunning() && tools().length > 0) {
       // content[0] += ` · ${tools().length} toolcalls`
@@ -2370,22 +2256,24 @@ function Task(props: ToolProps<typeof ActorTool>) {
     <InlineTool
       icon="│"
       spinner={isRunning()}
-      complete={input().description}
+      complete={input.description}
       pending="Delegating..."
       part={props.part}
       onClick={() => {
-        const session = targetSession()
-        if (!session) return
-        const actor = targetBucket()
+        const targetSession = props.metadata.sessionId
+        const targetActor = props.metadata.actorId as string | undefined
+        if (!targetSession) return
         if (
           route.data.type === "session" &&
-          session === route.data.sessionID &&
-          actor !== "main"
+          targetSession === route.data.sessionID &&
+          targetActor
         ) {
-          route.navigate({ ...route.data, agentID: actor })
+          // Subagent mode (shared sessionID): switch the agent slice in place.
+          route.navigate({ ...route.data, agentID: targetActor })
           return
         }
-        route.navigate({ type: "session", sessionID: session, agentID: actor !== "main" ? actor : undefined })
+        // Peer mode (different sessionID): navigate to peer's session, viewing its slice.
+        route.navigate({ type: "session", sessionID: targetSession, agentID: targetActor })
       }}
     >
       {content()}

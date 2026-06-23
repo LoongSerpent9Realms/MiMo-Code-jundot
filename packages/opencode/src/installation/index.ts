@@ -88,7 +88,7 @@ export interface Interface {
   readonly upgrade: (method: Method, target: string) => Effect.Effect<void, UpgradeFailedError>
 }
 
-export class Service extends Context.Service<Service, Interface>()("@mimocode/Installation") {}
+export class Service extends Context.Service<Service, Interface>()("@opencode/Installation") {}
 
 export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner> =
   Layer.effect(
@@ -216,17 +216,6 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         //   const data = yield* HttpClientResponse.schemaBodyJson(BrewFormula)(response)
         //   return data.versions.stable
         // }
-
-        if (detectedMethod === "curl") {
-          const headers = yield* text([
-            "curl",
-            "-sI",
-            "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest",
-          ])
-          const match = headers.match(/^location:.*\/tag\/v([0-9][^\s/]*)/im)
-          if (match) return match[1]
-          return yield* Effect.die(new Error("failed to resolve latest version from GitHub releases redirect"))
-        }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
           const r = (yield* text(["npm", "config", "get", "registry"])).trim()

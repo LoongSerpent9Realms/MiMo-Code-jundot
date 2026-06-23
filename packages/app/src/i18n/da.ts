@@ -612,10 +612,13 @@ export const dict = {
   "settings.section.server": "Server",
   "settings.tab.general": "Generelt",
   "settings.tab.shortcuts": "Genveje",
+  "settings.desktop.httpServer.title": "HTTP service",
+  "settings.desktop.httpServer.description": "Allow local tools such as Jundot to call MiMoCode at http://127.0.0.1:4096. Requires restart.",
   "settings.desktop.section.wsl": "WSL",
   "settings.desktop.wsl.title": "WSL integration",
   "settings.desktop.wsl.description": "Kør OpenCode-serveren inde i WSL på Windows.",
 
+  "settings.general.section.desktop": "Desktop",
   "settings.general.section.appearance": "Udseende",
   "settings.general.section.notifications": "Systemmeddelelser",
   "settings.general.section.updates": "Opdateringer",

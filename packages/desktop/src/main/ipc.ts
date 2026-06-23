@@ -25,6 +25,8 @@ type Deps = {
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
+  getHttpServerEnabled: () => Promise<boolean> | boolean
+  setHttpServerEnabled: (enabled: boolean) => Promise<void> | void
   getWslConfig: () => Promise<WslConfig>
   setWslConfig: (config: WslConfig) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
@@ -51,6 +53,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
+  )
+  ipcMain.handle("get-http-server-enabled", () => deps.getHttpServerEnabled())
+  ipcMain.handle("set-http-server-enabled", (_event: IpcMainInvokeEvent, enabled: boolean) =>
+    deps.setHttpServerEnabled(enabled),
   )
   ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
   ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))

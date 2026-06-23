@@ -10,20 +10,50 @@ import { errorMessage } from "@/util/error"
 import { withTimeout } from "@/util/timeout"
 import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
 import { Filesystem } from "@/util"
+import { Server } from "@/server/server"
+import { InstallationChannel } from "@/installation/version"
+import { Config } from "@/config"
+import { AppRuntime } from "@/effect/app-runtime"
 import type { GlobalEvent } from "@mimo-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
 import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
-import { checkTrust, markTrusted } from "@/project/workspace-trust"
-import { t } from "@/cli/i18n"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
 }
 
 type RpcClient = ReturnType<typeof Rpc.client<typeof rpc>>
+
+function shouldStartHeadlessServer(args: { project?: string }) {
+  const noArgs = process.argv.slice(2).length === 0 && !args.project
+  const interactive = process.stdin.isTTY || process.stdout.isTTY
+  const jundotPackagedPlugin = InstallationChannel.toLowerCase().includes("jundot")
+  return process.platform === "win32" && noArgs && !interactive && jundotPackagedPlugin
+}
+
+type JundotServerConfig = {
+  enabled?: boolean
+  hostname?: string
+  port?: number
+  mdns?: boolean
+  cors?: string[]
+}
+
+function isJundotPackagedPlugin() {
+  return InstallationChannel.toLowerCase().includes("jundot")
+}
+
+function resolveJundotNetworkConfig(config?: { server?: JundotServerConfig }) {
+  return {
+    hostname: config?.server?.hostname ?? "127.0.0.1",
+    port: config?.server?.port ?? 4096,
+    mdns: config?.server?.mdns ?? false,
+    cors: config?.server?.cors ?? [],
+  }
+}
 
 function createWorkerFetch(client: RpcClient): typeof fetch {
   const fn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -67,63 +97,6 @@ async function input(value?: string) {
   return piped + "\n" + value
 }
 
-async function promptWorkspaceTrust(directory: string, level: "untrusted" | "dangerous"): Promise<boolean> {
-  const prompts = await import("@clack/prompts")
-  const { EOL } = await import("os")
-
-  if (level === "dangerous") {
-    const isRoot = path.parse(directory).root === directory
-    const title = t(isRoot ? "trust.dangerous.title_root" : "trust.dangerous.title_home")
-    const body = t(isRoot ? "trust.dangerous.body_root" : "trust.dangerous.body_home")
-    const advice = t(isRoot ? "trust.dangerous.advice_root" : "trust.dangerous.advice_home")
-    prompts.log.warning(
-      [
-        UI.Style.TEXT_WARNING_BOLD + title + UI.Style.TEXT_NORMAL,
-        "",
-        directory,
-        "",
-        body,
-        "",
-        UI.Style.TEXT_DANGER + t("trust.plugin_warn") + UI.Style.TEXT_NORMAL,
-        "",
-        advice,
-      ].join(EOL),
-    )
-    const result = await prompts.select({
-      message: "",
-      options: [
-        { label: t("trust.dangerous.option.no"), value: false },
-        { label: t("trust.dangerous.option.yes"), value: true },
-      ],
-    })
-    if (prompts.isCancel(result)) return false
-    return result
-  }
-
-  prompts.log.info(
-    [
-      UI.Style.TEXT_HIGHLIGHT_BOLD + t("trust.title") + UI.Style.TEXT_NORMAL,
-      "",
-      directory,
-      "",
-      t("trust.safety_check"),
-      "",
-      t("trust.capabilities"),
-      "",
-      UI.Style.TEXT_DANGER + t("trust.plugin_warn") + UI.Style.TEXT_NORMAL,
-    ].join(EOL),
-  )
-  const result = await prompts.select({
-    message: "",
-    options: [
-      { label: t("trust.option.yes"), value: true },
-      { label: t("trust.option.no"), value: false },
-    ],
-  })
-  if (prompts.isCancel(result)) return false
-  return result
-}
-
 export const TuiThreadCommand = cmd({
   command: "$0 [project]",
   describe: "start mimocode tui",
@@ -160,15 +133,10 @@ export const TuiThreadCommand = cmd({
         type: "string",
         describe: "agent to use",
       })
-      .option("never-ask", {
+      .option("never-ask-questions", {
         type: "boolean",
         describe:
-          "start in never-ask mode — auto-decide without asking (permissions excluded), toggle at runtime with /never-ask",
-        default: false,
-      })
-      .option("trust", {
-        type: "boolean",
-        describe: "skip workspace trust prompt and trust the directory",
+          "start in never-ask mode — never prompt you; pick the best option autonomously (toggle at runtime with /never-ask-questions)",
         default: false,
       }),
   handler: async (args) => {
@@ -186,6 +154,21 @@ export const TuiThreadCommand = cmd({
         return
       }
 
+      const globalConfig = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.getGlobal()))
+
+      if (shouldStartHeadlessServer(args)) {
+        if (globalConfig.server?.enabled === false) {
+          console.log("mimocode Jundot HTTP service is disabled in config")
+          return
+        }
+        const opts = resolveJundotNetworkConfig(globalConfig)
+        const server = await Server.listen(opts)
+        console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
+        await new Promise(() => {})
+        await server.stop()
+        return
+      }
+
       // Resolve relative --project paths from PWD, then use the real cwd after
       // chdir so the thread and worker share the same directory key.
       const root = Filesystem.resolve(process.env.PWD ?? process.cwd())
@@ -200,19 +183,6 @@ export const TuiThreadCommand = cmd({
         return
       }
       const cwd = Filesystem.resolve(process.cwd())
-
-      if (!args.trust) {
-        const trustLevel = await checkTrust(cwd)
-        if (trustLevel !== "trusted") {
-          const accepted = await promptWorkspaceTrust(cwd, trustLevel)
-          if (!accepted) {
-            process.exit(0)
-            return
-          }
-          if (trustLevel === "untrusted") await markTrusted(cwd)
-        }
-      }
-
       const env = sanitizedProcessEnv({
         [MIMOCODE_PROCESS_ROLE]: "worker",
         [MIMOCODE_RUN_ID]: ensureRunID(),
@@ -264,20 +234,22 @@ export const TuiThreadCommand = cmd({
       const prompt = await input(args.prompt)
       const config = await TuiConfig.get()
 
-      const network = resolveNetworkOptionsNoConfig(args)
-      const external =
-        process.argv.includes("--port") ||
-        process.argv.includes("--hostname") ||
-        process.argv.includes("--mdns") ||
-        network.mdns ||
-        network.port !== 0 ||
-        network.hostname !== "127.0.0.1"
+      const jundot = isJundotPackagedPlugin()
+      const network = jundot ? resolveJundotNetworkConfig(globalConfig) : resolveNetworkOptionsNoConfig(args, globalConfig)
+      const external = jundot
+        ? globalConfig.server?.enabled !== false
+        : process.argv.includes("--port") ||
+          process.argv.includes("--hostname") ||
+          process.argv.includes("--mdns") ||
+          network.mdns ||
+          network.port !== 0 ||
+          network.hostname !== "127.0.0.1"
 
       const transport = external
         ? {
-            url: (await client.call("server", network)).url,
-            fetch: undefined,
-            events: undefined,
+            url: (await client.call("server", network)).url ?? `http://${network.hostname}:${network.port}`,
+            fetch: jundot ? createWorkerFetch(client) : undefined,
+            events: jundot ? createEventSource(client) : undefined,
           }
         : {
             url: "http://opencode.internal",
@@ -298,6 +270,27 @@ export const TuiThreadCommand = cmd({
             return [tui, server]
           },
           config,
+          server: jundot
+            ? {
+                enabled: globalConfig.server?.enabled !== false,
+                hostname: network.hostname,
+                port: network.port,
+              }
+            : undefined,
+          onServerConfigure: jundot
+            ? async (next) => {
+                if (!next.enabled) {
+                  await client.call("server", undefined)
+                  return { url: undefined }
+                }
+                return client.call("server", {
+                  hostname: next.hostname,
+                  port: next.port,
+                  mdns: next.mdns ?? false,
+                  cors: next.cors ?? [],
+                })
+              }
+            : undefined,
           directory: cwd,
           fetch: transport.fetch,
           events: transport.events,
@@ -308,7 +301,7 @@ export const TuiThreadCommand = cmd({
             model: args.model,
             prompt,
             fork: args.fork,
-            neverAsk: args["never-ask"],
+            neverAsk: args["never-ask-questions"],
           },
         })
       } finally {

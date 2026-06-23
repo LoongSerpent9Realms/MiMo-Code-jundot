@@ -8,12 +8,12 @@
       "dependsOn": [],
       "outputs": ["dist/**"]
     },
-    "@mimo-ai/cli#test": {
+    "opencode#test": {
       "dependsOn": ["^build"],
       "outputs": [],
       "passThroughEnv": ["*"]
     },
-    "@mimo-ai/cli#test:ci": {
+    "opencode#test:ci": {
       "dependsOn": ["^build"],
       "outputs": [".artifacts/unit/junit.xml"],
       "passThroughEnv": ["*"]

@@ -611,10 +611,13 @@ export const dict = {
   "settings.section.server": "เซิร์ฟเวอร์",
   "settings.tab.general": "ทั่วไป",
   "settings.tab.shortcuts": "ทางลัด",
+  "settings.desktop.httpServer.title": "HTTP service",
+  "settings.desktop.httpServer.description": "Allow local tools such as Jundot to call MiMoCode at http://127.0.0.1:4096. Requires restart.",
   "settings.desktop.section.wsl": "WSL",
   "settings.desktop.wsl.title": "การรวม WSL",
   "settings.desktop.wsl.description": "เรียกใช้เซิร์ฟเวอร์ OpenCode ภายใน WSL บน Windows",
 
+  "settings.general.section.desktop": "Desktop",
   "settings.general.section.appearance": "รูปลักษณ์",
   "settings.general.section.notifications": "การแจ้งเตือนระบบ",
   "settings.general.section.updates": "การอัปเดต",

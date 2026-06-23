@@ -49,6 +49,7 @@ import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
 import { DialogAlert } from "./ui/dialog-alert"
 import { DialogConfirm } from "./ui/dialog-confirm"
+import { DialogPrompt } from "./ui/dialog-prompt"
 import { ToastProvider, useToast } from "./ui/toast"
 import { ExitProvider, useExit } from "./context/exit"
 import { Session as SessionApi } from "@/session"
@@ -127,6 +128,8 @@ export function tui(input: {
   url: string
   args: Args
   config: TuiConfig.Info
+  server?: JundotHttpServiceState
+  onServerConfigure?: (next: JundotHttpServiceState) => Promise<{ url?: string }>
   onSnapshot?: () => Promise<string[]>
   directory?: string
   fetch?: typeof fetch
@@ -195,7 +198,11 @@ export function tui(input: {
                                         <FrecencyProvider>
                                           <PromptHistoryProvider>
                                             <PromptRefProvider>
-                                              <App onSnapshot={input.onSnapshot} />
+                                              <App
+                                                onSnapshot={input.onSnapshot}
+                                                server={input.server}
+                                                onServerConfigure={input.onServerConfigure}
+                                              />
                                             </PromptRefProvider>
                                           </PromptHistoryProvider>
                                         </FrecencyProvider>
@@ -222,7 +229,162 @@ export function tui(input: {
   })
 }
 
-function App(props: { onSnapshot?: () => Promise<string[]> }) {
+type JundotHttpServiceState = {
+  enabled: boolean
+  hostname: string
+  port: number
+  mdns?: boolean
+  cors?: string[]
+}
+
+function DialogJundotHttpService(props: {
+  initial: JundotHttpServiceState
+  onSave: (next: JundotHttpServiceState) => void
+  onConfigure: (next: JundotHttpServiceState) => Promise<{ url?: string }>
+}) {
+  const dialog = useDialog()
+  const sdk = useSDK()
+  const sync = useSync()
+  const toast = useToast()
+  const [state, setState] = createSignal<JundotHttpServiceState>(props.initial)
+
+  const apply = async (next: JundotHttpServiceState, message?: string) => {
+    const normalized = {
+      ...next,
+      hostname: next.hostname.trim() || "127.0.0.1",
+      port: next.port || 4096,
+    }
+    const update = await sdk.client.global.config.update({
+      config: {
+        server: {
+          enabled: normalized.enabled,
+          hostname: normalized.hostname,
+          port: normalized.port,
+          mdns: normalized.mdns ?? false,
+          cors: normalized.cors ?? [],
+        },
+      } as any,
+    })
+    if (update.error) {
+      toast.show({ variant: "error", message: JSON.stringify(update.error), duration: 6000 })
+      return
+    }
+
+    await props.onConfigure(normalized)
+    props.onSave(normalized)
+    setState(normalized)
+    dialog.replace(() => (
+      <DialogJundotHttpService initial={normalized} onSave={props.onSave} onConfigure={props.onConfigure} />
+    ))
+    await sdk.client.instance.dispose().catch(() => undefined)
+    await sync.bootstrap().catch(() => undefined)
+    toast.show({
+      variant: normalized.enabled ? "success" : "warning",
+      message:
+        message ??
+        (normalized.enabled
+          ? `Jundot HTTP 服务已启用：http://${normalized.hostname}:${normalized.port}`
+          : "Jundot HTTP 服务已禁用"),
+      duration: 5000,
+    })
+  }
+
+  const changeHost = async () => {
+    const raw = await DialogPrompt.show(dialog, "Jundot HTTP 服务地址", {
+      placeholder: "127.0.0.1",
+      value: state().hostname,
+    })
+    if (raw === null) return
+    const hostname = raw.trim()
+    if (!hostname) {
+      toast.show({ variant: "error", message: "地址不能为空" })
+      return
+    }
+    await apply({ ...state(), hostname })
+  }
+
+  const changePort = async () => {
+    const raw = await DialogPrompt.show(dialog, "Jundot HTTP 服务端口", {
+      placeholder: "4096",
+      value: String(state().port),
+    })
+    if (raw === null) return
+    const port = Number(raw.trim())
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      toast.show({ variant: "error", message: "端口必须是 1-65535 的整数" })
+      return
+    }
+    await apply({ ...state(), port })
+  }
+
+  const restart = async () => {
+    const current = state()
+    if (!current.enabled) {
+      toast.show({ variant: "warning", message: "服务已禁用，请先启用" })
+      return
+    }
+    await props.onConfigure(current)
+    toast.show({
+      variant: "success",
+      message: `Jundot HTTP 服务已重启：http://${current.hostname}:${current.port}`,
+      duration: 5000,
+    })
+  }
+
+  return (
+    <DialogSelect
+      title="Jundot HTTP 服务"
+      skipFilter
+      options={[
+        {
+          title: state().enabled ? "禁用 HTTP 服务" : "启用 HTTP 服务",
+          value: "toggle",
+          category: "服务",
+          description: state().enabled
+            ? `当前：http://${state().hostname}:${state().port}`
+            : "关闭后 Jundot 编辑器将无法通过 HTTP 调用 MiMoCode",
+          onSelect: () => {
+            void apply({ ...state(), enabled: !state().enabled })
+          },
+        },
+        {
+          title: "修改地址",
+          value: "hostname",
+          category: "地址",
+          description: state().hostname,
+          onSelect: () => {
+            void changeHost()
+          },
+        },
+        {
+          title: "修改端口",
+          value: "port",
+          category: "地址",
+          description: String(state().port),
+          onSelect: () => {
+            void changePort()
+          },
+        },
+        {
+          title: "重启 HTTP 服务",
+          value: "restart",
+          category: "服务",
+          description: state().enabled ? `重新监听 http://${state().hostname}:${state().port}` : "服务禁用时不可用",
+          disabled: !state().enabled,
+          onSelect: () => {
+            void restart()
+          },
+        },
+      ]}
+    />
+  )
+}
+
+function App(props: {
+  onSnapshot?: () => Promise<string[]>
+  server?: JundotHttpServiceState
+  onServerConfigure?: (next: JundotHttpServiceState) => Promise<{ url?: string }>
+}) {
   const tuiConfig = useTuiConfig()
   const plainTerminal = isPlainTerminal()
   const route = useRoute()
@@ -236,6 +398,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const event = useEvent()
   const sdk = useSDK()
   const toast = useToast()
+  const [jundotServer, setJundotServer] = createSignal<JundotHttpServiceState | undefined>(props.server)
   const themeState = useTheme()
   const { theme, setMode, locked, lock, unlock } = themeState
   const sync = useSync()
@@ -417,7 +580,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const connected = useConnected()
 
   // Seed never-ask from the launch flag once connected (the server starts with
-  // it off; this mirrors --never-ask to the question service).
+  // it off; this mirrors --never-ask-questions to the question service).
   let seededNeverAsk = false
   createEffect(() => {
     if (seededNeverAsk || !args.neverAsk || !connected()) return
@@ -541,7 +704,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "question.never_ask.toggle",
       category: "agent",
       slash: {
-        name: "never-ask",
+        name: "never-ask-questions",
+        aliases: ["never-ask"],
       },
       onSelect: () => {
         const next = !local.neverAsk.current()
@@ -672,6 +836,29 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         dialog.replace(() => <DialogStatus />)
       },
       category: "system",
+    },
+    {
+      title: "Jundot HTTP 服务",
+      description: jundotServer()
+        ? `${jundotServer()?.enabled ? "已启用" : "已禁用"} · http://${jundotServer()?.hostname}:${jundotServer()?.port}`
+        : "配置引擎 HTTP 服务",
+      value: "jundot.http.configure",
+      category: "system",
+      hidden: !props.onServerConfigure,
+      onSelect: () => {
+        const current = jundotServer() ?? {
+          enabled: true,
+          hostname: "127.0.0.1",
+          port: 4096,
+        }
+        dialog.replace(() => (
+          <DialogJundotHttpService
+            initial={current}
+            onSave={(next) => setJundotServer(next)}
+            onConfigure={props.onServerConfigure!}
+          />
+        ))
+      },
     },
     {
       title: t("tui.command.worktree.list.title"),
@@ -829,7 +1016,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: () => {
         process.once("SIGCONT", () => {
           renderer.resume()
-          renderer.currentRenderBuffer.clear()
         })
 
         renderer.suspend()
@@ -965,8 +1151,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     const choice = await DialogConfirm.show(
       dialog,
-      t("tui.toast.update_available.title"),
-      t("tui.toast.update_available.confirm", { version }),
+      `Update Available`,
+      `A new release v${version} is available. Would you like to update now?`,
       "skip",
     )
 
@@ -979,7 +1165,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     toast.show({
       variant: "info",
-      message: t("tui.toast.update_available.updating", { version }),
+      message: `Updating to v${version}...`,
       duration: 30000,
     })
 
@@ -988,8 +1174,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (result.error || !result.data?.success) {
       toast.show({
         variant: "error",
-        title: t("tui.toast.update_available.title"),
-        message: t("tui.toast.update_available.failed"),
+        title: "Update Failed",
+        message: "Update failed",
         duration: 10000,
       })
       return
@@ -997,20 +1183,11 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     await DialogAlert.show(
       dialog,
-      t("tui.toast.update_available.title"),
-      t("tui.toast.update_available.success", { version: result.data.version }),
+      "Update Complete",
+      `Successfully updated to MiMoCode v${result.data.version}. Please restart the application.`,
     )
 
     void exit()
-  })
-
-  event.on("installation.updated", (evt) => {
-    toast.show({
-      variant: "success",
-      title: t("tui.toast.updated.title"),
-      message: t("tui.toast.updated.message", { version: evt.properties.version }),
-      duration: 10000,
-    })
   })
 
   // Handle interactive bash commands: suspend TUI, let user interact directly in terminal
@@ -1051,7 +1228,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       } finally {
         renderer.currentRenderBuffer.clear()
         renderer.resume()
-        renderer.currentRenderBuffer.clear()
         renderer.requestRender()
       }
 

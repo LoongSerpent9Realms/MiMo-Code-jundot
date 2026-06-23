@@ -1,13 +1,9 @@
-- Use MiMoCode Compose skills when available, otherwise use superpowers skill if installed.
+- Always use superpowers skill instead of builtin plan mode.
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
-- The default branch in this repo is `main`.
-- CI triggers on both `main` and `dev` branches.
+- The default branch in this repo is `dev`.
+- Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
-
-## Core Focus (as of 2025-06-18)
-
-Our core development focus is the **TUI** (terminal UI) implementation in `packages/opencode/src/cli/cmd/tui/`. We do not currently provide support for Web or App interfaces. All operations should default to checking the TUI implementation first.
 
 ## Style Guide
 

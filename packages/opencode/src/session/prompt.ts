@@ -29,20 +29,6 @@ import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
-import {
-  RECOVERY_PROMPT_MILD,
-  RECOVERY_PROMPT_STRONG,
-  TEXT_LOOP_BUFFER_SIZE,
-  TEXT_LOOP_TRIGGER_COUNT,
-  TEXT_LOOP_MAX_RECOVERY,
-  normalizeForLoopDetection,
-  detectTextLoop,
-} from "../session/prompt/text-loop-recovery"
-import {
-  TEXT_NGRAM_MAX_RECOVERY,
-  TEXT_NGRAM_RECOVERY_REMIND,
-  TEXT_NGRAM_RECOVERY_REPLAN,
-} from "../session/prompt/text-ngram-detection"
 import { composeSkillsBlock } from "@/skill/compose/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -59,13 +45,6 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
-import {
-  serializeTrajectoryMessages,
-  withAssistantParts,
-  userQueryText,
-  assistantFinalText,
-  sessionErrorText,
-} from "./trajectory"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
@@ -186,10 +165,6 @@ const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATIO
 const INVALID_OUTPUT_CONTINUATION_LIMIT = Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
-
-function isExtensionPath(filePath: string): boolean {
-  return /\/\.mimocode\/(tools?|skills?|hooks?)\//.test(filePath)
-}
 const elog = EffectLogger.create({ service: "session.prompt" })
 
 export interface Interface {
@@ -258,15 +233,9 @@ export const layer = Layer.effect(
           .getModel(input.providerID as ProviderID, input.modelID as ModelID)
           .pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!model) return empty
-        // Anchor the env date to the session's creation time so the captured prefix is
-        // byte-identical to the runLoop's (which uses session.time.created), preserving
-        // Anthropic cache parity. If the session can't be loaded we can't guarantee that
-        // parity, so fall through to empty rather than emit a divergent date.
-        const captureSession = yield* sessions.get(input.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        if (!captureSession) return empty
         const [skills, env, instructions] = yield* Effect.all([
           sys.skills(ag),
-          Effect.sync(() => sys.environment(model, captureSession.time.created)),
+          Effect.sync(() => sys.environment(model)),
           instruction.system().pipe(Effect.orDie),
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
@@ -702,32 +671,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* input.processor.completeToolCall(options.toolCallId, output)
                   return output
                 }
-                const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
                 yield* plugin.trigger(
                   "tool.execute.before",
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
-                  beforeOutput,
+                  { args },
                 )
-                if (beforeOutput.cancel) {
-                  const cancelOutput = {
-                    title: "Cancelled",
-                    output: beforeOutput.cancelReason || "Tool call cancelled by hook",
-                    metadata: { cancelled: true },
-                  }
-                  yield* bus
-                    .publish(Metrics.ToolCall, {
-                      sessionID: ctx.sessionID,
-                      tool_name: item.id,
-                      input_bytes: Metrics.jsonByteLength(beforeOutput.args),
-                      output_bytes: 0,
-                      tool_call_id: options.toolCallId,
-                      tool_call_status: "cancelled",
-                    })
-                    .pipe(Effect.ignore)
-                  yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
-                  return cancelOutput
-                }
-                const result = yield* item.execute(beforeOutput.args, ctx)
+                const result = yield* item.execute(args, ctx)
                 log.debug("tool execute done", {
                   tool: item.id,
                   callID,
@@ -745,21 +694,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
                 yield* plugin.trigger(
                   "tool.execute.after",
-                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args },
                   output,
                 )
-                if (
-                  (item.id === "write" || item.id === "edit") &&
-                  beforeOutput.args?.filePath &&
-                  isExtensionPath(beforeOutput.args.filePath)
-                ) {
-                  yield* registry.reload().pipe(Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))), Effect.ignore)
-                }
                 yield* bus
                   .publish(Metrics.ToolCall, {
                     sessionID: ctx.sessionID,
                     tool_name: item.id,
-                    input_bytes: Metrics.jsonByteLength(beforeOutput.args),
+                    input_bytes: Metrics.jsonByteLength(args),
                     output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
                     tool_call_id: options.toolCallId,
                     tool_call_status: "success",
@@ -810,31 +752,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* input.processor.completeToolCall(opts.toolCallId, output)
                 return output
               }
-              const mcpBeforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
               yield* plugin.trigger(
                 "tool.execute.before",
                 { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
-                mcpBeforeOutput,
+                { args },
               )
-              if (mcpBeforeOutput.cancel) {
-                const cancelResult = {
-                  content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
-                }
-                yield* bus
-                  .publish(Metrics.ToolCall, {
-                    sessionID: ctx.sessionID,
-                    tool_name: key,
-                    input_bytes: Metrics.jsonByteLength(mcpBeforeOutput.args),
-                    output_bytes: 0,
-                    tool_call_id: opts.toolCallId,
-                    tool_call_status: "cancelled",
-                  })
-                  .pipe(Effect.ignore)
-                return cancelResult
-              }
               yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
               const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.promise(() =>
-                execute(mcpBeforeOutput.args, opts),
+                execute(args, opts),
               )
               log.debug("tool execute done (mcp)", {
                 tool: key,
@@ -1791,83 +1716,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // 与 invalidContinuations（generic invalid）分离，互不污染。局部于 runLoop，
         // 新一轮用户 turn 自动归零。
         let structuredRetries = 0
-        const resolvedAgentID = agentID ?? "main"
-        // Tracks plugin-driven cancellation (session.pre OR any session.userQuery.pre)
-        // so session.post reports outcome="cancelled" instead of "error".
-        let cancelled = false
-        let cancelReason: string | undefined
-
-        // Fires session.post exactly once via Effect.onExit on the body below.
-        // Without this wrapper any yielded failure inside the while loop (provider
-        // error, network error, thrown defect) would skip the hook entirely.
-        //
-        // Trajectory parity: uses MessageV2.filterCompactedEffect with the session's
-        // contextFrom / contextWatermark so compaction boundaries trim history to
-        // what the agent actually saw, and child-session parent prefixes are
-        // included — matching session.userQuery.post semantics.
-        const firePostSession = (exit: Exit.Exit<MessageV2.WithParts, unknown>) =>
-          Effect.gen(function* () {
-            const sliceMsgs = yield* MessageV2.filterCompactedEffect(sessionID, {
-              contextFrom: session.contextFrom,
-              contextWatermark: session.contextWatermark,
-              agentID: resolvedAgentID,
-            }).pipe(Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])))
-            const lastSlice = sliceMsgs.findLast((m) => m.info.role === "assistant")
-            const finalAsst =
-              lastSlice && lastSlice.info.role === "assistant" ? lastSlice.info : undefined
-            const finalParts = lastSlice?.parts ?? []
-            const failed = Exit.isFailure(exit)
-            const finalIsError = !!finalAsst?.error
-            const outcome: "completed" | "error" | "cancelled" = cancelled
-              ? "cancelled"
-              : failed || finalIsError
-                ? "error"
-                : "completed"
-            const error = cancelled
-              ? cancelReason
-              : failed
-                ? Cause.pretty(exit.cause)
-                : finalAsst
-                  ? sessionErrorText(finalAsst.error)
-                  : undefined
-            yield* plugin.trigger(
-              "session.post",
-              {
-                sessionID,
-                agentID: resolvedAgentID,
-                task_id,
-                outcome,
-                error,
-                finalText: finalAsst ? assistantFinalText(finalAsst, finalParts) : undefined,
-                assistantMessageID: finalAsst?.id,
-                trajectory: serializeTrajectoryMessages(sliceMsgs),
-              },
-              {},
-            )
-          }).pipe(Effect.ignore)
-
-        return yield* Effect.gen(function* () {
-          const preSession = { cancel: undefined as boolean | undefined, cancelReason: undefined as string | undefined }
-          yield* plugin.trigger(
-            "session.pre",
-            { sessionID, agentID: resolvedAgentID, task_id },
-            preSession,
-          )
-          if (preSession.cancel) {
-            cancelled = true
-            cancelReason = preSession.cancelReason
-            return yield* Effect.fail(
-              new NamedError.Unknown({
-                message: preSession.cancelReason ?? "Session cancelled by plugin",
-              }),
-            )
-          }
         const agentMetrics = { tokens_in: 0, tokens_out: 0, files_changed: 0 }
-        const trajectoryForStep = (currentMsgs: MessageV2.WithParts[], assistant: MessageV2.Assistant) =>
-          serializeTrajectoryMessages(
-            withAssistantParts(currentMsgs, assistant, MessageV2.parts(assistant.id)),
-          )
-
         const publishAgentRequest = (phase: string, taskType: string) =>
           bus
             .publish(Metrics.AgentRequest, {
@@ -1885,10 +1734,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Skip one overflow check so the model can respond on the trimmed context;
         // its new assistant message will carry accurate tokens for the next check.
         let skipOverflowCheck = false
-
-        const textLoopBuffer: string[] = []
-        let textLoopRecoveryAttempts = 0
-        let textNgramRecoveryAttempts = 0
 
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
@@ -2236,48 +2081,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
-        // Sliding-window n-gram repetition recovery. Symmetric across main and
-        // fork branches: 1st hit injects REMIND, 2nd hit injects REPLAN, 3rd
-        // hit (>= TEXT_NGRAM_MAX_RECOVERY) writes an error and signals break.
-        const handleTextRepeat = Effect.fn("SessionPrompt.handleTextRepeat")(function* (input: {
-          lastUser: MessageV2.User
-        }) {
-          if (textNgramRecoveryAttempts >= TEXT_NGRAM_MAX_RECOVERY) {
-            yield* slog.info("text n-gram: max recovery exceeded, terminating")
-            yield* bus.publish(Session.Event.Error, {
-              sessionID,
-              error: new NamedError.Unknown({
-                message: `Text repetition detected: repeated n-grams after ${TEXT_NGRAM_MAX_RECOVERY} recovery attempts. Session terminated.`,
-              }).toObject(),
-            })
-            return false
-          }
-          const recoveryText =
-            textNgramRecoveryAttempts === 0 ? TEXT_NGRAM_RECOVERY_REMIND : TEXT_NGRAM_RECOVERY_REPLAN
-          const reentry = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
-          })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: reentry.id,
-            sessionID,
-            type: "text",
-            synthetic: true,
-            text: recoveryText,
-          } satisfies MessageV2.TextPart)
-          textNgramRecoveryAttempts++
-          yield* slog.info("text n-gram: recovery injected", { attempt: textNgramRecoveryAttempts })
-          return true
-        })
-
         // content-filter is terminal on first occurrence: re-sending the same
         // turn would just get filtered again, so there is no nudge / counter.
         // Write a user-visible error (rendered via the session.error toast) and
@@ -2500,7 +2303,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const compactionPart = lastUserMsgForCompaction.parts.find(
               (p): p is MessageV2.CompactionPart => p.type === "compaction",
             )
-            const allMsgs = yield* sessions.messages({ sessionID, agentID: lastUser.agentID ?? "main" })
+            const allMsgs = yield* sessions.messages({ sessionID })
             const result = yield* compaction.process({
               parentID: lastUser.id,
               messages: allMsgs,
@@ -2832,107 +2635,40 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // Schema parity with parent is currently a consequence of checkpoint-writer
               // having no toolAllowlist (Task 2.6 + agent.test.ts guard). See ForkContext.tools
               // JSDoc in packages/opencode/src/actor/spawn.ts for the full contract.
-              const queryParts =
-                msgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
-              const query = userQueryText(queryParts)
-              const preQuery = {
-                cancel: undefined as boolean | undefined,
-                cancelReason: undefined as string | undefined,
-              }
-              yield* plugin.trigger(
-                "session.userQuery.pre",
-                { sessionID, agentID: resolvedAgentID, step, messageID: lastUser.id, query },
-                preQuery,
-              )
-              if (preQuery.cancel) {
-                cancelled = true
-                cancelReason = preQuery.cancelReason
-                handle.message.error = new MessageV2.AbortedError({
-                  message: preQuery.cancelReason ?? "Step cancelled by plugin",
-                }).toObject()
-                handle.message.finish = "cancelled"
-                yield* sessions.updateMessage(handle.message)
-                yield* plugin.trigger(
-                  "session.userQuery.post",
-                  {
-                    sessionID,
-                    agentID: resolvedAgentID,
-                    step,
-                    messageID: lastUser.id,
-                    query,
-                    assistantMessageID: handle.message.id,
-                    finish: handle.message.finish,
-                    error: preQuery.cancelReason,
-                    trajectory: trajectoryForStep(msgs, handle.message),
-                  },
-                  {},
-                )
-                return "break" as const
-              }
-              const result = yield* handle
-                .process({
-                  user: lastUser,
-                  agent,
-                  // Fork inherits the parent agent's permission (captured at spawn into
-                  // ForkContext). This drives llm.ts resolveTools/disabled() to the SAME
-                  // visible tool set as the parent → prompt-cache parity on the inherited
-                  // prefix. Scope: this affects tool VISIBILITY only; the per-call ask
-                  // ruleset (built separately in resolveTools' ask closure) is unchanged.
-                  // Parity is exact modulo non-default `session.permission`: the parent's
-                  // visibility ruleset is merge(parent.permission, session.permission)
-                  // while the fork's is merge(writer.permission, parentPermission) — so a
-                  // session-level rule pins the parent but not the fork. Still a strict
-                  // improvement over the old bespoke "*":"deny" block (which always
-                  // diverged). The `?? session.permission` is defense-in-depth only:
-                  // parentPermission is a required field (empty `[]` on a missed capture,
-                  // which `??` does NOT override), so the fallback fires solely if a future
-                  // refactor makes the field optional.
-                  permission: forkCtx.parentPermission ?? session.permission,
-                  sessionID,
-                  parentSessionID: session.parentID,
-                  system: additions,
-                  prebuiltSystem,
-                  messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
-                  tools,
-                  model,
-                  toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,
-                  agentID: lastUser.agentID,
-                })
-                .pipe(
-                  Effect.onExit((exit) =>
-                    plugin
-                      .trigger(
-                        "session.userQuery.post",
-                        {
-                          sessionID,
-                          agentID: resolvedAgentID,
-                          step,
-                          messageID: lastUser.id,
-                          query,
-                          assistantMessageID: handle.message.id,
-                          finish: handle.message.finish,
-                          error: Exit.isFailure(exit)
-                            ? Cause.pretty(exit.cause)
-                            : sessionErrorText(handle.message.error),
-                          finalText: assistantFinalText(handle.message, MessageV2.parts(handle.message.id)),
-                          trajectory: trajectoryForStep(msgs, handle.message),
-                        },
-                        {},
-                      )
-                      .pipe(Effect.ignore),
-                  ),
-                )
+              const result = yield* handle.process({
+                user: lastUser,
+                agent,
+                // Fork inherits the parent agent's permission (captured at spawn into
+                // ForkContext). This drives llm.ts resolveTools/disabled() to the SAME
+                // visible tool set as the parent → prompt-cache parity on the inherited
+                // prefix. Scope: this affects tool VISIBILITY only; the per-call ask
+                // ruleset (built separately in resolveTools' ask closure) is unchanged.
+                // Parity is exact modulo non-default `session.permission`: the parent's
+                // visibility ruleset is merge(parent.permission, session.permission)
+                // while the fork's is merge(writer.permission, parentPermission) — so a
+                // session-level rule pins the parent but not the fork. Still a strict
+                // improvement over the old bespoke "*":"deny" block (which always
+                // diverged). The `?? session.permission` is defense-in-depth only:
+                // parentPermission is a required field (empty `[]` on a missed capture,
+                // which `??` does NOT override), so the fallback fires solely if a future
+                // refactor makes the field optional.
+                permission: forkCtx.parentPermission ?? session.permission,
+                sessionID,
+                parentSessionID: session.parentID,
+                system: additions,
+                prebuiltSystem,
+                messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
+                tools,
+                model,
+                toolChoice: format.type === "json_schema" ? "required" : undefined,
+                agentID: lastUser.agentID,
+              })
 
               if (
                 result === "continue" &&
                 (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
               ) {
                 return "continue" as const
-              }
-
-              if (result === "text-repeat") {
-                if (yield* handleTextRepeat({ lastUser })) return "continue" as const
-                return "break" as const
               }
 
               if (structured !== undefined) {
@@ -2996,7 +2732,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const [skills, env, instructions] = yield* Effect.all([
               sys.skills(agent),
-              Effect.sync(() => sys.environment(model, session.time.created)),
+              Effect.sync(() => sys.environment(model)),
               instruction.system().pipe(Effect.orDie),
             ])
             // Surface which instruction files (CLAUDE.md, AGENTS.md, ...) were loaded.
@@ -3051,53 +2787,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // MessageV2.User.system for logging/replay); llm.stream itself uses prebuiltSystem.
               system: additions,
               prebuiltSystem,
-              messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
+              messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
               tools,
               model,
-              toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
+              toolChoice: format.type === "json_schema" ? ("required" as const) : undefined,
               agentID: lastUser.agentID,
             }
 
-            const queryParts =
-              msgs.findLast((m) => m.info.role === "user" && m.info.id === lastUser.id)?.parts ?? []
-            const query = userQueryText(queryParts)
-            const preQuery = {
-              cancel: undefined as boolean | undefined,
-              cancelReason: undefined as string | undefined,
-            }
-            yield* plugin.trigger(
-              "session.userQuery.pre",
-              { sessionID, agentID: resolvedAgentID, step, messageID: lastUser.id, query },
-              preQuery,
-            )
-            if (preQuery.cancel) {
-              cancelled = true
-              cancelReason = preQuery.cancelReason
-              handle.message.error = new MessageV2.AbortedError({
-                message: preQuery.cancelReason ?? "Step cancelled by plugin",
-              }).toObject()
-              handle.message.finish = "cancelled"
-              yield* sessions.updateMessage(handle.message)
-              yield* plugin.trigger(
-                "session.userQuery.post",
-                {
-                  sessionID,
-                  agentID: resolvedAgentID,
-                  step,
-                  messageID: lastUser.id,
-                  query,
-                  assistantMessageID: handle.message.id,
-                  finish: handle.message.finish,
-                  error: preQuery.cancelReason,
-                  trajectory: trajectoryForStep(msgs, handle.message),
-                },
-                {},
-              )
-              return "break" as const
-            }
-
-            const stepEffect = useMaxMode
-              ? MaxMode.runMaxStep({
+            const result = useMaxMode
+              ? yield* MaxMode.runMaxStep({
                   // runMaxStep reuses the identical per-step args as handle.process,
                   // plus the orchestration handles it needs.
                   ...processArgs,
@@ -3107,43 +2805,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   setStatus: (message) =>
                     status.set(sessionID, message ? { type: "busy", message } : { type: "busy" }),
                 })
-              : handle.process(processArgs)
-
-            const result = yield* stepEffect.pipe(
-              Effect.onExit((exit) =>
-                plugin
-                  .trigger(
-                    "session.userQuery.post",
-                    {
-                      sessionID,
-                      agentID: resolvedAgentID,
-                      step,
-                      messageID: lastUser.id,
-                      query,
-                      assistantMessageID: handle.message.id,
-                      finish: handle.message.finish,
-                      error: Exit.isFailure(exit)
-                        ? Cause.pretty(exit.cause)
-                        : sessionErrorText(handle.message.error),
-                      finalText: assistantFinalText(handle.message, MessageV2.parts(handle.message.id)),
-                      trajectory: trajectoryForStep(msgs, handle.message),
-                    },
-                    {},
-                  )
-                  .pipe(Effect.ignore),
-              ),
-            )
+              : yield* handle.process(processArgs)
 
             if (
               result === "continue" &&
               (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
             ) {
               return "continue" as const
-            }
-
-            if (result === "text-repeat") {
-              if (yield* handleTextRepeat({ lastUser })) return "continue" as const
-              return "break" as const
             }
 
             if (structured !== undefined) {
@@ -3255,67 +2923,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             return "continue" as const
           }).pipe(Effect.ensuring(instruction.clear(handle.message.id)))
-
-          // --- Text Loop Detection (cross-step) ---
-          const completedParts = MessageV2.parts(handle.message.id)
-          const stepText = completedParts
-            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
-            .map((p) => p.text)
-            .join(" ")
-          if (stepText.trim()) {
-            // Include tool call signatures in the key so same text + different tools ≠ loop
-            const toolSig = completedParts
-              .filter((p): p is MessageV2.ToolPart => p.type === "tool")
-              .map((p) => `${p.tool}:${JSON.stringify(p.state && "input" in p.state ? p.state.input : "")}`)
-              .join("|")
-            const normalized = normalizeForLoopDetection(stepText) + (toolSig ? `\0${toolSig}` : "")
-            textLoopBuffer.push(normalized)
-            if (textLoopBuffer.length > TEXT_LOOP_BUFFER_SIZE) textLoopBuffer.shift()
-
-            if (textLoopBuffer.length >= TEXT_LOOP_TRIGGER_COUNT) {
-              const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
-
-              if (isTextLoop) {
-                if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
-                  yield* slog.info("text loop: max recovery exceeded, terminating")
-                  yield* bus.publish(Session.Event.Error, {
-                    sessionID,
-                    error: new NamedError.Unknown({
-                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
-                    }).toObject(),
-                  })
-                  break
-                }
-                const recoveryText =
-                  textLoopRecoveryAttempts === 0 ? RECOVERY_PROMPT_MILD : RECOVERY_PROMPT_STRONG
-                // Create a NEW user message at the end of conversation (not append to original)
-                const reentry = yield* sessions.updateMessage({
-                  id: MessageID.ascending(),
-                  role: "user" as const,
-                  sessionID,
-                  agentID: lastUser.agentID,
-                  agent: lastUser.agent,
-                  model: lastUser.model,
-                  tools: lastUser.tools,
-                  format: lastUser.format,
-                  time: { created: Date.now() },
-                })
-                yield* sessions.updatePart({
-                  id: PartID.ascending(),
-                  messageID: reentry.id,
-                  sessionID,
-                  type: "text",
-                  synthetic: true,
-                  text: recoveryText,
-                } satisfies MessageV2.TextPart)
-                textLoopRecoveryAttempts++
-                textLoopBuffer.length = 0
-                yield* slog.info("text loop: recovery injected", { attempt: textLoopRecoveryAttempts })
-                continue
-              }
-            }
-          }
-
           if (outcome === "break") {
             if (yield* taskGate(lastUser)) continue
             if (yield* goalGate(lastUser)) continue
@@ -3348,7 +2955,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
         return final
-        }).pipe(Effect.onExit(firePostSession), Effect.orDie)
       },
     )
 

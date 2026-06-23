@@ -36,10 +36,10 @@ export const Default = lazy(() => create({}))
 function create(opts: { cors?: string[] }) {
   const app = new Hono()
     .onError(ErrorMiddleware)
-    .use(CorsMiddleware(opts))
-    .use(LoggerMiddleware)
     .use(AuthMiddleware)
+    .use(LoggerMiddleware)
     .use(CompressionMiddleware)
+    .use(CorsMiddleware(opts))
     .route("/global", GlobalRoutes())
 
   const runtime = adapter.create(app)
@@ -62,9 +62,9 @@ function create(opts: { cors?: string[] }) {
         new Hono()
           .use(InstanceMiddleware())
           .route("/experimental/workspace", WorkspaceRoutes())
-          .use(WorkspaceRouterMiddleware(runtime.upgradeWebSocket))
-          .route("/", InstanceRoutes(runtime.upgradeWebSocket)),
+          .use(WorkspaceRouterMiddleware(runtime.upgradeWebSocket)),
       )
+      .route("/", InstanceRoutes(runtime.upgradeWebSocket))
       .route("/", UIRoutes()),
     runtime,
   }

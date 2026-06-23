@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>MiMoPackageBuilder</AssemblyName>
+    <RootNamespace>MiMoPackageBuilder</RootNamespace>
+    <StartupObject>MiMoPackageBuilder.Program</StartupObject>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0</FileVersion>
+    <AssemblyVersion>1.0.0</AssemblyVersion>
+  </PropertyGroup>
+</Project>

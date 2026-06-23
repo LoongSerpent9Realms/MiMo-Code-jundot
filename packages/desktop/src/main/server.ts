@@ -1,5 +1,5 @@
 import { app } from "electron"
-import { DEFAULT_SERVER_URL_KEY, WSL_ENABLED_KEY } from "./constants"
+import { DEFAULT_SERVER_URL_KEY, HTTP_SERVER_ENABLED_KEY, WSL_ENABLED_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
 
@@ -21,6 +21,15 @@ export function setDefaultServerUrl(url: string | null) {
   getStore().delete(DEFAULT_SERVER_URL_KEY)
 }
 
+export function getHttpServerEnabled(): boolean {
+  const value = getStore().get(HTTP_SERVER_ENABLED_KEY)
+  return typeof value === "boolean" ? value : true
+}
+
+export function setHttpServerEnabled(enabled: boolean) {
+  getStore().set(HTTP_SERVER_ENABLED_KEY, enabled)
+}
+
 export function getWslConfig(): WslConfig {
   const value = getStore().get(WSL_ENABLED_KEY)
   return { enabled: typeof value === "boolean" ? value : false }
@@ -30,15 +39,16 @@ export function setWslConfig(config: WslConfig) {
   getStore().set(WSL_ENABLED_KEY, config.enabled)
 }
 
-export async function spawnLocalServer(hostname: string, port: number, password: string) {
-  prepareServerEnv(password)
+export async function spawnLocalServer(hostname: string, port: number, password: string | null) {
+  const username = process.env.MIMOCODE_SERVER_USERNAME ?? "mimocode"
+  prepareServerEnv(username, password)
   const { Log, Server } = await import("virtual:opencode-server")
   await Log.init({ level: "WARN" })
   const listener = await Server.listen({
     port,
     hostname,
-    username: "opencode",
-    password,
+    username,
+    password: password ?? undefined,
     cors: ["oc://renderer"],
   })
 
@@ -48,7 +58,7 @@ export async function spawnLocalServer(hostname: string, port: number, password:
     const ready = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) return
+        if (await checkHealth(url, password, username)) return
       }
     }
 
@@ -58,7 +68,7 @@ export async function spawnLocalServer(hostname: string, port: number, password:
   return { listener, health: { wait } }
 }
 
-function prepareServerEnv(password: string) {
+function prepareServerEnv(username: string, password: string | null) {
   const shell = process.platform === "win32" ? null : getUserShell()
   const shellEnv = shell ? (loadShellEnv(shell) ?? {}) : {}
   const env = {
@@ -67,14 +77,18 @@ function prepareServerEnv(password: string) {
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_CLIENT: "desktop",
-    OPENCODE_SERVER_USERNAME: "opencode",
-    OPENCODE_SERVER_PASSWORD: password,
     XDG_STATE_HOME: app.getPath("userData"),
+  }
+  if (password) {
+    Object.assign(env, {
+      MIMOCODE_SERVER_USERNAME: username,
+      MIMOCODE_SERVER_PASSWORD: password,
+    })
   }
   Object.assign(process.env, env)
 }
 
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
+export async function checkHealth(url: string, password?: string | null, username = "mimocode"): Promise<boolean> {
   let healthUrl: URL
   try {
     healthUrl = new URL("/global/health", url)
@@ -84,7 +98,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`${username}:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 

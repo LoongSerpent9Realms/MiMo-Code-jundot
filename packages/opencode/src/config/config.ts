@@ -300,12 +300,6 @@ const InfoSchema = Schema.Struct({
           open_notes: Schema.optional(PositiveInt).annotate({
             description: "Token cap for §11 Open notes section of checkpoint.md (writer-side budget validation). Default: 800.",
           }),
-          recent_user: Schema.optional(NonNegativeInt).annotate({
-            description: "Token cap for the recent user input section (verbatim user messages from the live DB, FIFO eviction). Default: 16000. Set 0 to disable.",
-          }),
-          recent_user_per_msg: Schema.optional(PositiveInt).annotate({
-            description: "Per-message cap inside recent user input section; oversized messages get head/tail truncation with messageID elision marker. Default: 2000.",
-          }),
         }),
       ).annotate({
         description:
@@ -359,18 +353,6 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ),
-  voice: Schema.optional(
-    Schema.Struct({
-      asr_model: Schema.optional(ConfigModelID).annotate({
-        description:
-          "Model to use for voice ASR transcription in provider/model format. Defaults to xiaomi/mimo-v2.5-asr.",
-      }),
-      control_model: Schema.optional(ConfigModelID).annotate({
-        description:
-          "Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.",
-      }),
-    }),
-  ).annotate({ description: "Voice input provider and model configuration." }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),

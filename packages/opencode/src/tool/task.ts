@@ -374,7 +374,7 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
         if (!t)
           return {
             title: `Task ${op.id}: not found`,
-            output: `No task ${op.id}. Use \`task list\` to see valid task IDs.`,
+            output: `No task ${op.id}`,
             metadata: {} as Metadata,
           }
         return {

@@ -48,7 +48,8 @@ Examples:
 await rm(file, { force: true })
 
 const quiet = values.quiet
-const cmd = ["opencode", "run"]
+const opencodePath = path.join(root, "packages", "opencode", "dist", "mimocode-windows-x64", "bin", "mimo.exe")
+const cmd = [opencodePath, "run"]
 cmd.push("--variant", values.variant)
 cmd.push("--command", "changelog", "--", ...args)
 

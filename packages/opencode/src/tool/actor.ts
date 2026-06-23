@@ -1,5 +1,4 @@
 import * as Tool from "./tool"
-import { RecoverableError } from "./recoverable"
 import DESCRIPTION from "./actor.txt"
 import SHELL_DESCRIPTION from "./actor.shell.txt"
 import { tokenize } from "./shell-tokenize"
@@ -272,7 +271,7 @@ export const ActorTool = Tool.define(
     const actorRegistry = yield* ActorRegistry.Service
     const checkpoint = yield* SessionCheckpoint.Service
     const waiter = yield* ActorWaiter.Service
-    const tasks = yield* TaskRegistry.Service
+    const taskRegistry = yield* TaskRegistry.Service
 
     // Resolve the Actor service through the late-bound spawnRef rather than as
     // a Layer dependency: pulling Actor.Service in here would create a layer
@@ -632,11 +631,7 @@ export const ActorTool = Tool.define(
 
         const next = yield* agent.get(op.subagent_type)
         if (!next) {
-          return yield* Effect.fail(
-            new RecoverableError(
-              `Unknown agent type "${op.subagent_type}". Valid subagent_type values are listed in the actor tool description — pass one of those.`,
-            ),
-          )
+          return yield* Effect.fail(new Error(`Unknown agent type: ${op.subagent_type} is not a valid agent type`))
         }
 
         let prompt = op.prompt
@@ -686,7 +681,7 @@ export const ActorTool = Tool.define(
             effectiveTaskId = undefined
             taskNotice = `note: task_id "${op.task_id}" is not a valid task ID (expected Tn or Tn.m); ran ad-hoc. Task IDs come from the \`task\` tool.`
           } else {
-            const existing = yield* tasks.get({ session_id: ctx.sessionID, id: op.task_id })
+            const existing = yield* taskRegistry.get({ session_id: ctx.sessionID, id: op.task_id })
             if (!existing) {
               effectiveTaskId = undefined
               taskNotice = `note: task_id "${op.task_id}" does not exist in this session; ran ad-hoc. Create it with the \`task\` tool first, or omit task_id.`
@@ -710,14 +705,18 @@ export const ActorTool = Tool.define(
           model,
           background,
           task_id: effectiveTaskId,
-          onReady: ({ actorID, sessionID }) =>
-            ctx.metadata({
-              title: op.description,
-              metadata: { sessionId: sessionID, actorId: actorID, model },
-            }),
           ...(op.output_schema
             ? { format: { type: "json_schema" as const, schema: op.output_schema, retryCount: 2 } }
             : {}),
+        })
+
+        yield* ctx.metadata({
+          title: op.description,
+          metadata: {
+            sessionId: spawnResult.sessionID,
+            actorId: spawnResult.actorID,
+            model,
+          },
         })
 
         if (op.action ==="spawn") {

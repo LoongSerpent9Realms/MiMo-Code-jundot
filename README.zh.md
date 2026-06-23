@@ -4,7 +4,7 @@
   <img src="assets/readme/mimocode-banner.png" alt="MiMoCode" width="700">
 </p>
 
-<p align="center"><strong>MiMo Code: Where Models and Agents Co-Evolve</strong></p>
+<p align="center"><strong>开源 AI 编程智能体，拥有跨会话记忆。</strong></p>
 
 <p align="center">
   中文 | <a href="README.md">English</a>
@@ -30,9 +30,6 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # 或通过 npm 安装
 npm install -g @mimo-ai/cli
-
-# 运行
-mimo
 ```
 
 首次启动自动引导配置。支持：
@@ -40,15 +37,6 @@ mimo
 - **小米 MiMo 平台** — OAuth 登录
 - **从 Claude Code 导入** — 一键迁移已有认证
 - **自定义 Provider** — TUI 内添加任意 OpenAI 兼容 API
-
-<details>
-<summary><strong>WSL：剪贴板问题</strong></summary>
-
-如果在 WSL 上复制出现乱码，安装 `xsel`：
-```bash
-sudo apt install xsel
-```
-</details>
 
 ---
 
@@ -99,76 +87,7 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 
 ### 语音输入
 
-基于 TenVAD 和 MiMo ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 MiMo 登录用户可用。需要安装 `sox`（macOS 上 `brew install sox`，其他平台类似）。
-
-<details>
-<summary><strong>WSLg 音频配置</strong></summary>
-
-```bash
-sudo apt install -y sox pulseaudio libasound2-plugins
-export PULSE_SERVER=unix:/mnt/wslg/PulseServer
-```
-</details>
-
-<details>
-<summary><strong>SSH 远程音频（Mac → 远程主机）</strong></summary>
-
-```bash
-# Mac（本地）
-brew install pulseaudio
-pulseaudio --load="module-native-protocol-tcp auth-ip-acl=127.0.0.1" --exit-idle-time=-1 --daemonize
-# 在 ~/.ssh/config 中添加: RemoteForward 4713 127.0.0.1:4713
-
-# 远程主机
-apt install -y pulseaudio pulseaudio-utils sox
-export PULSE_SERVER=tcp:127.0.0.1:4713
-# 验证: pactl info
-```
-</details>
-
-<details>
-<summary><strong>非 MiMo 渠道语音输入（OpenRouter、内部 API 等）</strong></summary>
-
-语音输入可通过 `voice` 配置字段路由到其他 OpenAI 兼容 provider。ASR 模型（`mimo-v2.5-asr`）仅在 MiMo 平台可用；语音控制模式（`mimo-v2.5`）可通过 OpenRouter 等中转平台使用。
-
-**OpenRouter（仅语音控制）：**
-
-使用 `/connect` 连接 OpenRouter 后，只需在配置中添加：
-```jsonc
-{
-  "voice": {
-    "control_model": "openrouter/xiaomi/mimo-v2.5"
-  }
-}
-```
-
-**内部 / 自建中转平台（ASR + 语音控制）：**
-```jsonc
-{
-  "provider": {
-    "internal": {
-      "options": {
-        "baseURL": "https://your-api-gateway.example.com/v1",
-        "apiKey": "sk-..."
-      },
-      "models": {
-        "xiaomi/mimo-v2.5-asr": { "name": "MiMo-V2.5-ASR" },
-        "xiaomi/mimo-v2.5": { "name": "MiMo-V2.5" }
-      }
-    }
-  },
-  "voice": {
-    "asr_model": "internal/xiaomi/mimo-v2.5-asr",
-    "control_model": "internal/xiaomi/mimo-v2.5"
-  }
-}
-```
-
-自定义 provider 必须在 `models` 中注册至少一个模型才能被系统识别。`voice.*_model` 中的模型名直接传给 API，不必与注册的 key 完全一致。OpenRouter 等内置 provider 无需手动配置 models。
-
-> **注意**：自定义 provider 注册的模型会出现在主模型选择列表中。请勿将 ASR 专用模型（如 `mimo-v2.5-asr`）用作编程主模型。
-
-</details>
+基于 TenVAD 和 MiMo ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 MiMo 登录用户可用。
 
 ### Dream & Distill
 

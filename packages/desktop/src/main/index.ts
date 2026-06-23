@@ -41,7 +41,15 @@ import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigratio
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
-import { getDefaultServerUrl, getWslConfig, setDefaultServerUrl, setWslConfig, spawnLocalServer } from "./server"
+import {
+  getDefaultServerUrl,
+  getHttpServerEnabled,
+  getWslConfig,
+  setDefaultServerUrl,
+  setHttpServerEnabled,
+  setWslConfig,
+  spawnLocalServer,
+} from "./server"
 import {
   createLoadingWindow,
   createMainWindow,
@@ -142,10 +150,12 @@ async function initialize() {
   const sqliteDone = needsMigration ? defer<void>() : undefined
   let overlay: BrowserWindow | null = null
 
-  const port = await getSidecarPort()
+  const httpServerEnabled = getHttpServerEnabled()
+  const port = await getSidecarPort(httpServerEnabled)
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
-  const password = randomUUID()
+  const password = process.env.MIMOCODE_SERVER_PASSWORD ?? (httpServerEnabled ? null : randomUUID())
+  const username = password ? (process.env.MIMOCODE_SERVER_USERNAME ?? "mimocode") : null
 
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
@@ -179,7 +189,7 @@ async function initialize() {
     server = listener
     serverReady.resolve({
       url,
-      username: "opencode",
+      username,
       password,
     })
 
@@ -251,6 +261,8 @@ registerIpcHandlers({
   consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),
+  getHttpServerEnabled: () => getHttpServerEnabled(),
+  setHttpServerEnabled: (enabled) => setHttpServerEnabled(enabled),
   getWslConfig: () => Promise.resolve(getWslConfig()),
   setWslConfig: (config: WslConfig) => setWslConfig(config),
   getDisplayBackend: async () => null,
@@ -292,13 +304,32 @@ function ensureLoopbackNoProxy() {
   upsert("no_proxy")
 }
 
-async function getSidecarPort() {
+async function getSidecarPort(httpServerEnabled: boolean) {
   const fromEnv = process.env.OPENCODE_PORT
   if (fromEnv) {
     const parsed = Number.parseInt(fromEnv, 10)
     if (!Number.isNaN(parsed)) return parsed
   }
 
+  if (!httpServerEnabled) return await findAvailablePort()
+
+  const preferred = 4096
+  if (await isPortAvailable(preferred)) return preferred
+
+  return await findAvailablePort()
+}
+
+async function isPortAvailable(port: number) {
+  const server = createServer()
+  return await new Promise<boolean>((resolve) => {
+    server.once("error", () => resolve(false))
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true))
+    })
+  })
+}
+
+async function findAvailablePort() {
   return await new Promise<number>((resolve, reject) => {
     const server = createServer()
     server.on("error", reject)

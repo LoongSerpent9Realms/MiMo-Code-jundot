@@ -2,6 +2,9 @@ import { Schema } from "effect"
 import { zod } from "@/util/effect-zod"
 
 export class Server extends Schema.Class<Server>("ServerConfig")({
+  enabled: Schema.optional(Schema.Boolean).annotate({
+    description: "Enable or disable the HTTP server",
+  }),
   port: Schema.optional(Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))).annotate({
     description: "Port to listen on",
   }),

@@ -11,7 +11,6 @@ playground
 tmp
 dist
 ts-dist
-*.tgz
 .turbo
 **/.serena
 .serena/
@@ -31,6 +30,9 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 .dev-home/
+artifacts/package-builder/
+tools/MiMoPackageBuilder/bin/
+tools/MiMoPackageBuilder/obj/
 
 # Local agent harness state
 .claude/
@@ -42,6 +44,3 @@ tsconfig.tsbuildinfo
 experiment/*.log
 experiment/last-outcome.json
 /experiment
-
-/mimoapi/
-/packages/opencode/src/ext

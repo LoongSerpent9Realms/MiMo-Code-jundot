@@ -7,6 +7,14 @@ import { fileURLToPath } from "url"
 const dir = fileURLToPath(new URL("..", import.meta.url))
 process.chdir(dir)
 
+// Determine current platform's mimo binary directory in dist/
+// Naming must match build.ts: [BINARY_PREFIX, os, arch, baseline?, abi?].filter(Boolean)
+const BINARY_PREFIX = "mimocode"
+const platformOs = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux"
+const platformArch = process.arch === "x64" ? "x64" : "arm64"
+// For current platform, build.ts creates the non-abi/non-baseline variant
+const currentBinaryDir = `${BINARY_PREFIX}-${platformOs}-${platformArch}`
+
 async function published(name: string, version: string) {
   return (await $`npm view ${name}@${version} version`.nothrow()).exitCode === 0
 }
@@ -17,58 +25,44 @@ async function publish(dir: string, name: string, version: string) {
     console.log(`already published ${name}@${version}`)
     return
   }
-  await $`rm -f *.tgz`.cwd(dir).nothrow()
   await $`bun pm pack`.cwd(dir)
   await $`npm publish *.tgz --access public --tag ${Script.channel}`.cwd(dir)
 }
 
-const binaries: { dir: string; name: string; version: string }[] = []
+const binaries: Record<string, string> = {}
 for (const filepath of new Bun.Glob("*/package.json").scanSync({ cwd: "./dist" })) {
-  const p = await Bun.file(`./dist/${filepath}`).json()
-  binaries.push({ dir: `./dist/${filepath.replace("/package.json", "")}`, name: p.name, version: p.version })
+  const pkg = await Bun.file(`./dist/${filepath}`).json()
+  binaries[pkg.name] = pkg.version
 }
-console.log("binaries", Object.fromEntries(binaries.map((b) => [b.name, b.version])))
-const version = binaries[0].version
+console.log("binaries", binaries)
+const version = pkg.version // use mimo's own version, not the first binary's
 
-await $`rm -rf ./dist/${pkg.name}`
 await $`mkdir -p ./dist/${pkg.name}`
-await $`cp -r ./bin ./dist/${pkg.name}/bin`
+await $`cp -r ./dist/${currentBinaryDir}/bin ./dist/${pkg.name}/bin`
 await $`cp ./script/postinstall.mjs ./dist/${pkg.name}/postinstall.mjs`
 await Bun.file(`./dist/${pkg.name}/LICENSE`).write(await Bun.file("../../LICENSE").text())
-await Bun.file(`./dist/${pkg.name}/README.md`).write(await Bun.file("../../README_npm.md").text())
 
 await Bun.file(`./dist/${pkg.name}/package.json`).write(
   JSON.stringify(
     {
       name: pkg.name,
-      version: version,
-      description: "MiMo Code: Where Models and Agents Co-Evolve",
-      license: "MIT",
-      author: "Xiaomi MiMo Team",
-      homepage: "https://mimo.xiaomi.com/coder",
-      repository: {
-        type: "git",
-        url: "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
-      },
-      bugs: {
-        url: "https://github.com/XiaomiMiMo/MiMo-Code/issues",
-      },
-      keywords: ["ai", "cli", "code", "xiaomi", "mimo", "mimocode"],
       bin: {
         mimo: "./bin/mimo",
       },
       scripts: {
         postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs",
       },
-      optionalDependencies: Object.fromEntries(binaries.map((b) => [b.name, b.version])),
+      version: version,
+      license: pkg.license,
+      optionalDependencies: binaries,
     },
     null,
     2,
   ),
 )
 
-const tasks = binaries.map(async (b) => {
-  await publish(b.dir, b.name, b.version)
+const tasks = Object.entries(binaries).map(async ([name]) => {
+  await publish(`./dist/${name}`, name, binaries[name])
 })
 await Promise.all(tasks)
 await publish(`./dist/${pkg.name}`, pkg.name, version)

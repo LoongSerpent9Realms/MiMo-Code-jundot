@@ -1,4 +1,4 @@
-import { PlanEnterTool, PlanExitTool } from "./plan"
+import { PlanExitTool } from "./plan"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
@@ -105,7 +105,6 @@ export interface Interface {
   readonly all: () => Effect.Effect<Tool.Def[]>
   readonly named: () => Effect.Effect<{ actor: ActorDef; read: ReadDef }>
   readonly tools: (model: { providerID: ProviderID; modelID: ModelID; agent: Agent.Info }) => Effect.Effect<Tool.Def[]>
-  readonly reload: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ToolRegistry") {}
@@ -124,8 +123,7 @@ export const layer = Layer.effect(
     const read = yield* ReadTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
-    const planexit = yield* PlanExitTool
-    const planenter = yield* PlanEnterTool
+    const plan = yield* PlanExitTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
     const bash = yield* BashTool
@@ -187,7 +185,7 @@ export const layer = Layer.effect(
           const namespace = path.basename(match, path.extname(match))
           // `match` is an absolute filesystem path from `Glob.scanSync(..., { absolute: true })`.
           // Import it as `file://` so Node on Windows accepts the dynamic import.
-          const mod = yield* Effect.promise(() => import(`${pathToFileURL(match).href}?v=${Date.now()}`))
+          const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
           for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
             custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
           }
@@ -221,8 +219,7 @@ export const layer = Layer.effect(
           changedir: Tool.init(changedirtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
-          planexit: Tool.init(planexit),
-          planenter: Tool.init(planenter),
+          plan: Tool.init(plan),
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
@@ -248,8 +245,7 @@ export const layer = Layer.effect(
             tool.patch,
             tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            tool.planexit,
-            tool.planenter,
+            tool.plan,
             tool.memory,
             tool.history,
             tool.task,
@@ -263,9 +259,7 @@ export const layer = Layer.effect(
 
     const all: Interface["all"] = Effect.fn("ToolRegistry.all")(function* () {
       const s = yield* InstanceState.get(state)
-      const customIds = new Set(s.custom.map((t) => t.id))
-      const builtins = s.builtin.filter((t) => !customIds.has(t.id))
-      return [...builtins, ...s.custom] as Tool.Def[]
+      return [...s.builtin, ...s.custom] as Tool.Def[]
     })
 
     const ids: Interface["ids"] = Effect.fn("ToolRegistry.ids")(function* () {
@@ -381,13 +375,7 @@ export const layer = Layer.effect(
       return { actor: s.actor, read: s.read }
     })
 
-    const reload: Interface["reload"] = Effect.fn("ToolRegistry.reload")(function* () {
-      yield* skill.reload()
-      yield* plugin.reloadFileHooks()
-      yield* InstanceState.invalidate(state)
-    })
-
-    return Service.of({ ids, all, named, tools, reload })
+    return Service.of({ ids, all, named, tools })
   }),
 )
 

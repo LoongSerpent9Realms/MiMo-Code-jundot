@@ -218,6 +218,10 @@ const createPlatform = (): Platform => {
       await window.api.setDefaultServerUrl(url)
     },
 
+    getHttpServerEnabled: () => window.api.getHttpServerEnabled(),
+
+    setHttpServerEnabled: (enabled: boolean) => window.api.setHttpServerEnabled(enabled),
+
     getDisplayBackend: async () => {
       return window.api.getDisplayBackend().catch(() => null)
     },

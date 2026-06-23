@@ -7,11 +7,6 @@ import * as Session from "./session"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
-import {
-  createTextNgramMonitor,
-  isTextNgramRepeat,
-  textNgramRepeat,
-} from "./prompt/text-ngram-detection"
 import type { Permission } from "@/permission"
 import { Log } from "@/util"
 
@@ -105,12 +100,8 @@ export function toSchemaOnlyTools(tools: Record<string, AITool>): Record<string,
  */
 // Exported for integration tests (drives the real candidate path with a mock
 // llm.stream). Not part of the public surface — call sites use runMaxStep.
-export const runCandidate = (
-  input: MaxStepInput,
-  index: number,
-): Effect.Effect<Candidate | null | "text-repeat"> =>
+export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<Candidate | null> =>
   Effect.gen(function* () {
-    const monitor = createTextNgramMonitor()
     // Fresh accumulator per attempt: the retry below re-runs this whole block,
     // so partial reasoning/text/toolCalls from a failed attempt must not carry
     // over into the retry.
@@ -141,12 +132,10 @@ export const runCandidate = (
       switch (event.type) {
         case "reasoning-delta":
           candidate.reasoning += event.text
-          if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
           if (event.providerMetadata) candidate.reasoningMetadata = event.providerMetadata
           break
         case "text-delta":
           candidate.text += event.text
-          if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
           if (event.providerMetadata) candidate.textMetadata = event.providerMetadata
           break
         case "tool-call":
@@ -193,7 +182,6 @@ export const runCandidate = (
       while: LLM.isTransientCapacityError,
       schedule: LLM.persistentRetrySchedule,
     }),
-    Effect.catchIf(isTextNgramRepeat, () => Effect.succeed("text-repeat" as const)),
     Effect.catch((e) =>
       Effect.sync(() => {
         log.warn("candidate failed", { index, error: e instanceof Error ? e.message : String(e) })
@@ -337,8 +325,7 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
       Array.from({ length: n }, (_, i) => runCandidate(input, i)),
       { concurrency: n },
     )
-    if (results.some((result) => result === "text-repeat")) return "text-repeat"
-    const survivors = results.filter((c): c is Candidate => c !== null && c !== "text-repeat")
+    const survivors = results.filter((c): c is Candidate => c !== null)
 
     if (survivors.length === 0) {
       log.warn("all candidates failed, falling back to single process")

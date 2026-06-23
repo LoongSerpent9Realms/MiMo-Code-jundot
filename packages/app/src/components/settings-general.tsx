@@ -623,6 +623,39 @@ export const SettingsGeneral: Component = () => {
     </div>
   )
 
+  const DesktopSection = () => (
+    <Show when={desktop() && platform.getHttpServerEnabled && platform.setHttpServerEnabled}>
+      {(_) => {
+        const [enabledResource, actions] = createResource(() => platform.getHttpServerEnabled?.())
+        const enabled = () => (enabledResource.state === "pending" ? undefined : enabledResource.latest)
+
+        const onChange = (checked: boolean) =>
+          Promise.resolve(platform.setHttpServerEnabled?.(checked)).finally(() => actions.refetch())
+
+        return (
+          <div class="flex flex-col gap-1">
+            <h3 class="text-14-medium text-text-strong pb-2">{language.t("settings.general.section.desktop")}</h3>
+
+            <SettingsList>
+              <SettingsRow
+                title={language.t("settings.desktop.httpServer.title")}
+                description={language.t("settings.desktop.httpServer.description")}
+              >
+                <div data-action="settings-http-server">
+                  <Switch
+                    checked={enabled() ?? true}
+                    disabled={enabledResource.state === "pending"}
+                    onChange={onChange}
+                  />
+                </div>
+              </SettingsRow>
+            </SettingsList>
+          </div>
+        )
+      }}
+    </Show>
+  )
+
   console.log(import.meta.env)
   return (
     <div class="flex flex-col h-full overflow-y-auto no-scrollbar px-4 pb-10 sm:px-10 sm:pb-10">
@@ -640,6 +673,8 @@ export const SettingsGeneral: Component = () => {
         <NotificationsSection />
 
         <SoundsSection />
+
+        <DesktopSection />
 
         {/*<Show when={platform.platform === "desktop" && platform.os === "windows" && platform.getWslEnabled}>
           {(_) => {
