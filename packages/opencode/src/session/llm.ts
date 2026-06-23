@@ -584,7 +584,7 @@ const live: Layer.Layer<
         topK: params.topK,
         providerOptions: ProviderTransform.providerOptions(input.model, params.options),
         activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
-        tools,
+        tools: ProviderTransform.tools(tools, input.model),
         toolChoice: input.toolChoice,
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
