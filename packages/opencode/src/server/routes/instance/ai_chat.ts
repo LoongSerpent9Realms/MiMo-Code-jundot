@@ -61,6 +61,8 @@ type CollectedChatResponse = {
 }
 
 let jundotMirrorSessionID: SessionID | undefined
+const JUNDOT_WEB_SOURCE_POLICY =
+  "When research needs current web information, prefer authoritative sources and avoid low-quality small sites. For game-related research, prefer Steam, Epic Games Store, official game or publisher sites, and Bilibili videos. If the editor exposes fetch_url, use it only with authoritative URLs and save research files under .JundotAI/research/."
 
 function contentToText(content: unknown): string {
   if (typeof content === "string") return content
@@ -223,6 +225,7 @@ const PSEUDO_TOOL_NAME_ALIASES: Record<string, string> = {
   grep_code: "grep",
   search_code: "grep",
   read_file: "read_files",
+  webfetch: "fetch_url",
 }
 
 function normalizePseudoToolCall(name: string, args: Record<string, unknown>, availableToolNames?: Set<string>) {
@@ -242,6 +245,18 @@ function normalizePseudoToolCall(name: string, args: Record<string, unknown>, av
 
   if (normalizedName === "grep" && "limit" in args) {
     delete args.limit
+  }
+
+  if (normalizedName === "fetch_url" && !("dest_path" in args)) {
+    const rawUrl = typeof args.url === "string" ? args.url : "research"
+    let filename = "research.txt"
+    try {
+      const url = new URL(rawUrl)
+      filename = (url.hostname + url.pathname).replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "")
+      if (!filename) filename = "research"
+      if (!/\.[A-Za-z0-9]+$/.test(filename)) filename += ".html"
+    } catch {}
+    args.dest_path = `.JundotAI/research/${filename}`
   }
 
   return normalizedName
@@ -335,6 +350,30 @@ function toExistingSessionID(input: string | undefined) {
   }
 }
 
+function buildErrorChatResponse(sessionID: string, model: string, error: unknown) {
+  const content = `AI request failed inside MiMoCode: ${errorMessage(error)}`
+  const choices = [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content,
+      },
+      finish_reason: "stop",
+    },
+  ]
+  return {
+    id: `chatcmpl_${sessionID}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices,
+    content,
+    finish_reason: "stop",
+    openai_compatible: { choices },
+  }
+}
+
 export const AiChatRoutes = () => {
   const app = new Hono()
 
@@ -363,7 +402,11 @@ export const AiChatRoutes = () => {
         return c.json({ error: "message or messages with a user entry is required" })
       }
 
-      const result = await runRequest(
+      const fallbackSessionID = body.sessionID ?? body.sessionId ?? SessionID.descending()
+      const fallbackModel = body.model ? `${body.model.providerID}/${body.model.modelID}` : "unknown"
+      let result
+      try {
+        result = await runRequest(
         "AiChatRoutes.chat",
         c,
         Effect.gen(function* () {
@@ -426,7 +469,7 @@ export const AiChatRoutes = () => {
                 ? [
                     "The user is asking for a Jundot/Godot editor engine feature, but no concrete file path was provided. Do not call tools yet. Reply in Chinese with a short task breakdown: goal, 3-5 implementation steps, likely C++ editor files/modules to inspect such as editor/docks/filesystem_dock.* and editor/ai/*, and the first recommended next step. Do not mention package.json, VS Code, or extension manifests unless the user explicitly asks for them. Do not claim you are inspecting files now.",
                   ]
-                : [],
+                : [JUNDOT_WEB_SOURCE_POLICY],
             messages,
             tools: toolResultContinuation || planningOnly || blockedToolContinuation ? {} : availableTools,
           }
@@ -690,6 +733,9 @@ export const AiChatRoutes = () => {
           }
         }),
       )
+      } catch (error) {
+        result = buildErrorChatResponse(fallbackSessionID, fallbackModel, error)
+      }
 
       return c.json(result)
     },

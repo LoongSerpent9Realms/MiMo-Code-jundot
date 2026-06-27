@@ -1,0 +1,90 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the leading v. Leave empty to use package version."
+        required: false
+        type: string
+      channel:
+        description: "Release channel. Use latest for normal releases."
+        required: false
+        default: "latest"
+        type: choice
+        options:
+          - latest
+          - beta
+      publish:
+        description: "Publish the GitHub release after uploading assets."
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    name: Build packages and upload release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      OPENCODE_RELEASE: "1"
+      SKIP_NPM_PUBLISH: "1"
+      MIMO_PARALLEL: "2"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Configure release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+
+          if [[ -n "${version}" ]]; then
+            echo "OPENCODE_VERSION=${version}" >> "$GITHUB_ENV"
+          fi
+
+          echo "OPENCODE_CHANNEL=${{ inputs.channel || 'latest' }}" >> "$GITHUB_ENV"
+
+      - name: Create draft GitHub release
+        id: version
+        run: bun script/version.ts
+
+      - name: Build all packages and upload assets
+        run: bun packages/opencode/script/build.ts
+
+      - name: Publish GitHub release
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        run: gh release edit "v${{ steps.version.outputs.version }}" --draft=false --repo "$GH_REPO"
+
+      - name: Upload dist as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          path: |
+            packages/opencode/dist
+          if-no-files-found: ignore

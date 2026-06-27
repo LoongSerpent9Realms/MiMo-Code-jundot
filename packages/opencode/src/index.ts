@@ -43,6 +43,31 @@ import { ensureProcessMetadata } from "./util/mimo-process"
 
 const processMetadata = ensureProcessMetadata("main")
 
+function ensureLocalNoProxy() {
+  const keys = ["NO_PROXY", "no_proxy"] as const
+  const required = ["localhost", "127.0.0.1", "::1"]
+
+  for (const key of keys) {
+    const current = process.env[key]
+    if (!current) continue
+
+    const entries = current
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+    const lower = new Set(entries.map((entry) => entry.toLowerCase()))
+    for (const host of required) {
+      if (!lower.has(host)) entries.push(host)
+    }
+    process.env[key] = entries.join(",")
+    return
+  }
+
+  process.env.NO_PROXY = required.join(",")
+}
+
+ensureLocalNoProxy()
+
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
     e: errorMessage(e),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import crypto from "crypto"
 import { MimoAuthPlugin } from "../../src/plugin/mimo"
+import { MimoFreeAuthPlugin } from "../../src/plugin/mimo-free"
 import type { PluginInput } from "@mimo-ai/plugin"
 
 function encrypt(recipientPkBase64: string, payload: string): string {
@@ -255,5 +256,30 @@ describe("MimoAuthPlugin", () => {
       expect(callbackResult.type).toBe("success")
       expect(callbackResult.key).toBe("sk-crypto")
     })
+  })
+})
+
+describe("MimoFreeAuthPlugin", () => {
+  test("registers anonymous mimo-auto provider", async () => {
+    const hooks = await MimoFreeAuthPlugin(fakeInput)
+    const cfg: any = {}
+
+    await hooks.config!(cfg)
+
+    expect(cfg.provider.mimo.name).toBe("MiMo Auto (free)")
+    expect(cfg.provider.mimo.models["mimo-auto"]).toBeDefined()
+    expect(cfg.provider.mimo.options.apiKey).toBe("anonymous")
+    expect(cfg.disabled_providers).toContain("opencode")
+    expect(cfg.disabled_providers).toContain("opencode-go")
+  })
+
+  test("does not overwrite an existing mimo provider", async () => {
+    const hooks = await MimoFreeAuthPlugin(fakeInput)
+    const cfg: any = { provider: { mimo: { name: "Custom MiMo", models: {} } } }
+
+    await hooks.config!(cfg)
+
+    expect(cfg.provider.mimo.name).toBe("Custom MiMo")
+    expect(cfg.provider.mimo.models["mimo-auto"]).toBeUndefined()
   })
 })

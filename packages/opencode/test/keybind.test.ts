@@ -318,6 +318,13 @@ describe("Keybind.parse", () => {
     expect(result).toEqual([])
   })
 
+  test("should ignore empty or invalid values", () => {
+    expect(Keybind.parse(undefined)).toEqual([])
+    expect(Keybind.parse(null)).toEqual([])
+    expect(Keybind.parse("   ")).toEqual([])
+    expect(Keybind.parse(1)).toEqual([])
+  })
+
   test("should handle special keys", () => {
     const result = Keybind.parse("pgup")
     expect(result).toEqual([

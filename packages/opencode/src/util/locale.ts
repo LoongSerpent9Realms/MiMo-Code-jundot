@@ -58,7 +58,8 @@ export function duration(input: number) {
   return `${days}d ${hours}h`
 }
 
-export function truncate(str: string, len: number): string {
+export function truncate(str: unknown, len: number): string {
+  if (typeof str !== "string") return ""
   if (str.length <= len) return str
   return str.slice(0, len - 1) + "…"
 }

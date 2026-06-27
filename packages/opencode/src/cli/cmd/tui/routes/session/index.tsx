@@ -587,7 +587,7 @@ export function Session() {
           .then(() => {
             toBottom()
           })
-        const parts = sync.data.part[message.id]
+        const parts = sync.data.part[message.id] ?? []
         prompt?.set(
           parts.reduce(
             (agg, part) => {
