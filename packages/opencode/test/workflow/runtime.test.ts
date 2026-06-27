@@ -336,8 +336,15 @@ describe("WorkflowRuntime cancel cascade", () => {
           model: ref,
           maxConcurrentAgents: 8,
         })
-        // Let the fan-out register its children, then cancel mid-flight.
-        yield* Effect.sleep("150 millis")
+        // Wait until the fan-out has registered children, then cancel mid-flight.
+        // A fixed sleep is brittle on slow systems — poll the registry instead so
+        // the cancel always lands AFTER spawns have populated childActorIDs (the
+        // pre-condition the test is asserting against).
+        for (let i = 0; i < 60; i++) {
+          const found = (yield* registry.listBySession(parent.id)).filter((a) => a.actorID !== "main")
+          if (found.length > 0) break
+          yield* Effect.sleep("50 millis")
+        }
         yield* runtime.cancel({ runID })
 
         const s = yield* runtime.status({ runID })
@@ -1071,6 +1078,58 @@ describe("WorkflowRuntime persists agentTimeoutMs across resume (TUI-style)", ()
         const row = yield* WorkflowPersistence.load(r.runID)
         expect(row).toBeDefined()
         expect(row!.agentTimeoutMs).toBeUndefined()
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})
+
+describe("WorkflowRuntime structure tree", () => {
+  it.live("records phase + agent nodes attributed to the current phase", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "wf structure",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        yield* llm.text("done")
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `phase("Plan")`,
+          `await agent("a", { label: "la" })`,
+          `await agent("b")`,
+          `return null`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        const outcome = yield* runtime.wait({ runID })
+        expect(outcome.status).toBe("completed")
+        const s = yield* runtime.structure({ runID })
+        expect(s.nodes.filter((n) => n.type === "phase").map((n) => (n as { title: string }).title)).toEqual(["Plan"])
+        const agents = s.nodes.filter((n) => n.type === "agent") as {
+          phaseId?: string
+          status: string
+          label?: string
+          prompt?: string
+          durationMs?: number
+          actorID?: string
+          resultSummary?: string
+        }[]
+        expect(agents).toHaveLength(2)
+        expect(agents.every((a) => a.phaseId === "p0")).toBe(true)
+        expect(agents.every((a) => a.status === "succeeded")).toBe(true)
+        expect(agents[0].label).toBe("la")
+        // Each agent call records its parameters (prompt) + duration — the user's
+        // core requirement that every agent call surface its params.
+        expect(agents[0].prompt).toBe("a")
+        expect(agents[1].prompt).toBe("b")
+        expect(agents.every((a) => typeof a.durationMs === "number")).toBe(true)
+        // actorID is captured so the TUI can navigate to the spawned subagent.
+        expect(agents.every((a) => typeof a.actorID === "string" && a.actorID.length > 0)).toBe(true)
+        // result summary is captured so the tree shows what the agent produced.
+        expect(agents.every((a) => a.resultSummary === "done")).toBe(true)
       }),
       { git: true, config: providerCfg },
     ),

@@ -20,13 +20,15 @@ import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
+import { isRecoverableError } from "@/tool/recoverable"
 import { Log } from "@/util"
 import { isRecord } from "@/util/record"
+import { createTextNgramMonitor, type TextNgramMonitor } from "./prompt/text-ngram-detection"
 
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
-export type Result = "overflow" | "stop" | "continue"
+export type Result = "overflow" | "stop" | "continue" | "text-repeat"
 
 export type Event = LLM.Event
 
@@ -144,6 +146,8 @@ interface ProcessorContext extends Input {
   stepStartedAt: number | undefined
   firstTokenAt: number | undefined
   stepPartIds: PartID[]
+  textNgramMonitor: TextNgramMonitor | undefined
+  textNgramRepeat: boolean
 }
 
 type StreamEvent = Event
@@ -198,6 +202,8 @@ export const layer: Layer.Layer<
         stepStartedAt: undefined,
         firstTokenAt: undefined,
         stepPartIds: [],
+        textNgramMonitor: undefined,
+        textNgramRepeat: false,
       }
       let aborted = false
       // Only the main agent owns session-level status. Subagents (explore,
@@ -280,12 +286,17 @@ export const layer: Layer.Layer<
       const failToolCall = Effect.fn("SessionProcessor.failToolCall")(function* (toolCallID: string, error: unknown) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return false
+        // Agent-recoverable failures (bad args, malformed call, unknown task/actor
+        // id) carry a marker the TUI reads to render them muted instead of as a red
+        // error block. The full actionable message still flows to the model.
+        const recoverable = isRecoverableError(error)
         yield* session.updatePart({
           ...match.part,
           state: {
             status: "error",
             input: match.part.state.input,
             error: errorMessage(error),
+            ...(recoverable ? { metadata: { ...match.part.state.metadata, recoverable: true } } : {}),
             time: { start: match.part.state.time.start, end: Date.now() },
           },
         })
@@ -295,6 +306,11 @@ export const layer: Layer.Layer<
         yield* settleToolCall(toolCallID)
         return true
       })
+
+      const checkTextNgram = (text: string) => {
+        if (ctx.textNgramRepeat || !ctx.textNgramMonitor) return
+        if (ctx.textNgramMonitor.append(text)) ctx.textNgramRepeat = true
+      }
 
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
@@ -324,6 +340,7 @@ export const layer: Layer.Layer<
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!(value.id in ctx.reasoningMap)) return
             ctx.reasoningMap[value.id].text += value.text
+            checkTextNgram(value.text)
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.reasoningMap[value.id].sessionID,
@@ -549,6 +566,7 @@ export const layer: Layer.Layer<
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!ctx.currentText) return
             ctx.currentText.text += value.text
+            checkTextNgram(value.text)
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.currentText.sessionID,
@@ -677,11 +695,13 @@ export const layer: Layer.Layer<
             ctx.reasoningMap = {}
             ctx.stepPartIds = []
             ctx.toolcalls = {}
+            ctx.textNgramRepeat = false
+            ctx.textNgramMonitor = createTextNgramMonitor()
             const stream = llm.stream(streamInput)
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsOverflowHandling),
+              Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat),
               Stream.runDrain,
             )
           }).pipe(
@@ -728,6 +748,7 @@ export const layer: Layer.Layer<
           )
 
           if (ctx.needsOverflowHandling) return "overflow"
+          if (ctx.textNgramRepeat) return "text-repeat"
           if (ctx.blocked || ctx.assistantMessage.error) return "stop"
           return "continue"
         })

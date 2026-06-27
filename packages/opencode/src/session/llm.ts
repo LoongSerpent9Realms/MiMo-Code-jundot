@@ -9,15 +9,15 @@ import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
 import { Config } from "@/config"
 import { Instance } from "@/project/instance"
-import type { Agent } from "@/agent/agent"
+import { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
-import { Flag } from "@/flag/flag"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
-import { Wildcard } from "@/util"
+import { Wildcard, ToolCompat } from "@/util"
+import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
 import { migrateProjectMemory } from "./checkpoint-paths"
@@ -449,12 +449,16 @@ const live: Layer.Layer<
         workflowModel.sessionID = input.sessionID
         workflowModel.systemPrompt = system.join("\n")
         workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
-          const t = tools[toolName]
+          const registered = Object.keys(tools)
+          const resolvedName = ToolCompat.resolveName(toolName, registered) ?? toolName
+          const t = tools[resolvedName]
           if (!t || !t.execute) {
             return { result: "", error: `Unknown tool: ${toolName}` }
           }
           try {
-            const result = await t.execute!(JSON.parse(argsJson), {
+            const schema = await Promise.resolve(asSchema(t.inputSchema).jsonSchema)
+            const args = ToolCompat.normalizeInput(ToolCompat.parseToolInput(argsJson), schema)
+            const result = await t.execute!(args, {
               toolCallId: _requestID,
               messages: input.messages,
               abortSignal: input.abort,
@@ -470,7 +474,7 @@ const live: Layer.Layer<
           }
         }
 
-        const ruleset = Permission.merge(input.agent.permission ?? [], input.permission ?? [])
+        const ruleset = Agent.runtimePermission(input.agent, input.permission)
         workflowModel.sessionPreapprovedTools = Object.keys(tools).filter((name) => {
           const match = ruleset.findLast((rule) => Wildcard.match(name, rule.permission))
           return !match || match.action !== "ask"
@@ -559,15 +563,22 @@ const live: Layer.Layer<
           })
         },
         async experimental_repairToolCall(failed) {
-          const lower = failed.toolCall.toolName.toLowerCase()
-          if (lower !== failed.toolCall.toolName && tools[lower]) {
+          const registered = Object.keys(tools).filter((x) => x !== "invalid")
+          const repaired = await ToolCompat.repairToolCall({
+            toolName: failed.toolCall.toolName,
+            input: failed.toolCall.input,
+            toolNames: registered,
+            getSchema: (toolName) => failed.inputSchema({ toolName }),
+          })
+          if (repaired) {
             l.info("repairing tool call", {
               tool: failed.toolCall.toolName,
-              repaired: lower,
+              repaired: repaired.toolName,
             })
             return {
               ...failed.toolCall,
-              toolName: lower,
+              toolName: repaired.toolName,
+              input: repaired.input,
             }
           }
           return {
@@ -589,20 +600,11 @@ const live: Layer.Layer<
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
         headers: {
-          ...(input.model.providerID.startsWith("opencode")
-            ? {
-                "x-opencode-project": Instance.project.id,
-                "x-opencode-session": input.sessionID,
-                "x-opencode-request": input.user.id,
-                "x-opencode-client": Flag.MIMOCODE_CLIENT,
-              }
-            : {
-                "x-session-affinity": input.sessionID,
-                ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
-                "User-Agent": `mimocode/${InstallationVersion}`,
-              }),
+          "x-session-affinity": input.sessionID,
+          ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
           ...input.model.headers,
           ...headers,
+          "User-Agent": `mimocode/${InstallationVersion}`,
         },
         // AI SDK's internal retry loop is SILENT — it emits no events and does
         // not update session status, so the TUI shows only a dead spinner while
@@ -715,7 +717,7 @@ export const defaultLayer = Layer.suspend(() =>
 function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
   const disabled = Permission.disabled(
     Object.keys(input.tools),
-    Permission.merge(input.agent.permission, input.permission ?? []),
+    Agent.runtimePermission(input.agent, input.permission),
   )
   return Record.filter(input.tools, (_, k) => input.user.tools?.[k] !== false && !disabled.has(k))
 }

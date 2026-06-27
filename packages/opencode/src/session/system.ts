@@ -10,6 +10,9 @@ import PROMPT_GPT from "./prompt/gpt.txt"
 import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
+import PROMPT_DEEPSEEK from "./prompt/deepseek.txt"
+import PROMPT_GLM from "./prompt/glm.txt"
+import PROMPT_MINIMAX from "./prompt/minimax.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
@@ -29,11 +32,14 @@ export function provider(model: Provider.Model) {
   if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
   if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
   if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
+  if (model.api.id.toLowerCase().includes("deepseek")) return [PROMPT_DEEPSEEK]
+  if (model.api.id.toLowerCase().includes("glm")) return [PROMPT_GLM]
+  if (model.api.id.toLowerCase().includes("minimax")) return [PROMPT_MINIMAX]
   return [PROMPT_DEFAULT]
 }
 
 export interface Interface {
-  readonly environment: (model: Provider.Model) => string[]
+  readonly environment: (model: Provider.Model, now: number) => string[]
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
@@ -45,7 +51,7 @@ export const layer = Layer.effect(
     const skill = yield* Skill.Service
 
     return Service.of({
-      environment(model) {
+      environment(model, now) {
         const project = Instance.project
         return [
           [
@@ -57,7 +63,11 @@ export const layer = Layer.effect(
             `  Workspace root folder: ${Instance.worktree}`,
             `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
             `  Platform: ${process.platform}`,
-            `  Today's date: ${new Date().toDateString()}`,
+            // Anchored to the session's creation time (not request time) so this block
+            // stays byte-identical across every turn of a session — including ones that
+            // cross midnight — keeping it inside the Anthropic cached system prefix.
+            // Both the runLoop and checkpoint prefix-capture paths pass the same value.
+            `  Today's date: ${new Date(now).toDateString()}`,
             `</env>`,
           ].join("\n"),
           `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`,

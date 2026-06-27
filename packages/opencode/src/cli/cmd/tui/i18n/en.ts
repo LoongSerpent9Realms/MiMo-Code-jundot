@@ -18,9 +18,6 @@ export const dict: Record<string, string> = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
-  // Provider display names (override server-provided names per locale)
-  "provider.name.xiaomi": "Xiaomi",
-
   // Prompt placeholders
   "tui.prompt.placeholder.normal": "Type your message... (type / for commands)",
   "tui.prompt.placeholder.shell": 'Run a command... "{{example}}"',
@@ -242,7 +239,6 @@ export const dict: Record<string, string> = {
   "tui.dialog.confirm.confirm": "Confirm",
   "tui.dialog.select.placeholder": "Search",
   "tui.dialog.model.login_hint": "Tip: run /login to sign in before switching models",
-  "provider.name.mimo": "MiMo",
   "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, limited-time free)",
   "tui.dialog.token_plan.title": "Subscribe to a Token Plan or wait in queue",
   "tui.dialog.token_plan.line1": "In free mode, requests are currently queued. For stable, high-quality service,",

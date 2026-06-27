@@ -22,7 +22,7 @@ export class RecoverableError extends Error {
 
 // True when `error` should be treated as agent-recoverable. Checks the class
 // first, then falls back to a structural `recoverable === true` marker so the
-// signal survives the orDie -> defect -> tool-error hop even if `instanceof` is
+// signal survives the orDie → defect → tool-error hop even if `instanceof` is
 // defeated (e.g. cross-realm or after a serialization round-trip).
 //
 // Caveat: the structural check matches ANY object carrying `recoverable: true`,

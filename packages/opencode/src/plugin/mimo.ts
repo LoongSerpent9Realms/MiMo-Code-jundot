@@ -58,6 +58,7 @@ function decrypt(privateKeyDer: Buffer, encryptedBase64: string): { sk?: string;
 }
 
 function openBrowser(url: string) {
+  if (process.env.CI || process.env.NODE_ENV === "test") return
   const command =
     process.platform === "darwin"
       ? `open "${url}"`
@@ -85,10 +86,15 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
   return {
     config: async (input) => {
       input.provider ??= {}
+      // Register xiaomi as a config provider so it shows up even before login.
+      // name/api are intentionally left to the models.dev database (name: "Xiaomi",
+      // api: https://api.xiaomimimo.com/v1) — hardcoding "MiMo" here collided with
+      // the free "mimo" provider's display name and confused users.
       input.provider.xiaomi ??= {}
-      const xiaomi = input.provider.xiaomi
-      xiaomi.name ??= "MiMo"
-      xiaomi.api ??= "https://api.xiaomimimo.com/v1"
+      // Both "opencode" and "opencode-go" stay enabled. The opencode custom
+      // loader strips the free/public tier (and hides paid models until the
+      // user authenticates). "opencode-go" has no free models and no custom
+      // loader, so it only loads once a subscription key/auth is present.
     },
     auth: {
       provider: "xiaomi",
